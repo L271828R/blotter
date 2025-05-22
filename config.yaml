@@ -1,0 +1,4 @@
+multipliers: {/MES: 5, MES_OPT: 50}
+option_block: {end: '16:00', start: '12:00'}
+risk_buckets: [200, 400, 800, 1200]
+strategies: [gap-fade, vwap-reversal, breakout]
