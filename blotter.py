@@ -490,12 +490,13 @@ def open_trade(
         if risk.empty():
             rich.print("[red]Need risk checklist/note[/]"); raise typer.Exit()
 
+    # FIXED: Use keyword arguments to ensure multiplier is passed correctly
     leg = Leg(
-        symbol,
-        side.upper(),
-        qty,
-        to_decimal(price),
-        cfg["multipliers"].get(symbol.split("_")[0], 1),
+        symbol=symbol,
+        side=side.upper(),
+        qty=qty,
+        entry=to_decimal(price),
+        multiplier=cfg["multipliers"].get(symbol.split("_")[0], 1),
     )
     trade = Trade(str(uuid.uuid4())[:8], NOW().isoformat(), typ_u, strat, [leg], risk)
     book.append(trade); save_book(book); write_single_trade_file(trade)
@@ -504,4 +505,3 @@ def open_trade(
 
 if __name__=="__main__":
     app()
-
