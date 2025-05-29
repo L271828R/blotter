@@ -18,3 +18,12 @@ strategies:
   - BULL-PUT
   - BEAR-CALL
   - BULL-PUT-OVERNIGHT
+costs:
+  FUTURE:
+    commission_per_contract: "1.10"
+    exchange_fees_per_contract: "0.37"
+    regulatory_fees_per_contract: "0.00"
+  OPTION:
+    commission_per_contract: "1.25"
+    exchange_fees_per_contract: "0.50"
+    regulatory_fees_per_contract: "0.02"

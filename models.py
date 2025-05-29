@@ -1,7 +1,8 @@
-# models.py - Updated with commission and fees
-"""Core data models for the trade blotter with commission and fees"""
+# ═══════════════════════════════════════════════════════════════════
+# models.py - Core data models
+# ═══════════════════════════════════════════════════════════════════
 
-from __future__ import annotations  # FIXED: was missing __
+from __future__ import annotations
 import decimal as dec
 from dataclasses import dataclass, field
 
@@ -18,9 +19,9 @@ class Risk:
 @dataclass
 class CommissionFees:
     """Commission and fees structure"""
-    commission: dec.Decimal = dec.Decimal('0')     # Broker commission
-    exchange_fees: dec.Decimal = dec.Decimal('0')  # Exchange fees  
-    regulatory_fees: dec.Decimal = dec.Decimal('0') # Regulatory fees
+    commission: dec.Decimal = dec.Decimal('0')
+    exchange_fees: dec.Decimal = dec.Decimal('0')
+    regulatory_fees: dec.Decimal = dec.Decimal('0')
     
     def total(self) -> dec.Decimal:
         """Total cost of commission + all fees"""
@@ -34,7 +35,6 @@ class Leg:
     entry: dec.Decimal
     exit: dec.Decimal | None = None
     multiplier: int = 50
-    # Commission and fees
     entry_costs: CommissionFees = field(default_factory=CommissionFees)
     exit_costs: CommissionFees | None = None
     
@@ -51,10 +51,7 @@ class Leg:
         if gross is None:
             return None
         
-        # Subtract entry costs
         total_costs = self.entry_costs.total()
-        
-        # Subtract exit costs if position is closed
         if self.exit_costs:
             total_costs += self.exit_costs.total()
         
@@ -77,11 +74,9 @@ class Trade:
     risk: Risk | None = None
     status: str = "OPEN"
     pnl: dec.Decimal | None = None
-    # 2-hour tracking fields
     pnl_2h: dec.Decimal | None = None
     pnl_2h_recorded: bool = False
     pnl_2h_timestamp: str | None = None
-    # Partial close tracking
     original_qty: int | None = None
     
     def gross_pnl(self) -> dec.Decimal | None:
@@ -99,3 +94,4 @@ class Trade:
     def total_costs(self) -> dec.Decimal:
         """Total commission and fees for the trade"""
         return sum(l.total_costs() for l in self.legs)
+
