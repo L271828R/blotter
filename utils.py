@@ -1,10 +1,8 @@
-# utils.py - Updated with cost calculation functions
+# utils.py - Updated with cost calculation functions and strategy-aware blocking
 """Utility functions for the trade blotter"""
-
 import datetime as dt
 import decimal as dec
 from typing import Tuple
-
 # FIXED: Use absolute import instead of relative import
 from models import CommissionFees
 
@@ -28,9 +26,23 @@ def calculate_costs(trade_type: str, qty: int, cfg: dict) -> CommissionFees:
         regulatory_fees=regulatory_rate * qty
     )
 
-def blocked_for_options(cfg: dict) -> Tuple[bool, str | None]:
-    """Check if current time falls within any configured option block periods"""
+def blocked_for_options(cfg: dict, strategy: str = None) -> Tuple[bool, str | None]:
+    """
+    Check if current time falls within any configured option block periods
+    Returns (is_blocked, block_name_or_reason)
+    
+    Args:
+        cfg: Configuration dictionary
+        strategy: Optional strategy name to check for exemptions
+    """
     now = dt.datetime.now().time()
+    
+    # Check if strategy is exempt from blocks (using your "exemption" format)
+    if strategy:
+        exempt_strategies = cfg.get("exemption", [])
+        
+        if strategy.upper() in [s.upper() for s in exempt_strategies]:
+            return False, f"Exempt: {strategy} is allowed during blocks"
     
     # Handle legacy single block configuration
     if "option_block" in cfg:
@@ -39,7 +51,7 @@ def blocked_for_options(cfg: dict) -> Tuple[bool, str | None]:
         if start <= now <= end:
             return True, cfg["option_block"].get("name", "Option Block")
     
-    # Handle new multiple blocks configuration
+    # Handle multiple blocks configuration
     if "option_blocks" in cfg:
         for block in cfg["option_blocks"]:
             start = dt.time.fromisoformat(block["start"])
@@ -54,6 +66,18 @@ def blocked_for_options(cfg: dict) -> Tuple[bool, str | None]:
                     return True, block.get("name", "Option Block")
     
     return False, None
+
+def is_strategy_exempt(cfg: dict, strategy: str) -> Tuple[bool, str]:
+    """
+    Check if a strategy is exempt from option blocks (using your exemption format)
+    Returns (is_exempt, reason)
+    """
+    exempt_strategies = cfg.get("exemption", [])
+    
+    if strategy.upper() in [s.upper() for s in exempt_strategies]:
+        return True, f"{strategy} is allowed during blocks"
+    
+    return False, "Not exempt"
 
 def calc_trade_pnl(tr, use_net=True):
     """Calculate total PnL for a trade (net by default, gross if use_net=False)"""

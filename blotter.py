@@ -297,6 +297,18 @@ def show_option_blocks():
             
             status = " [red](ACTIVE)[/]" if is_active else ""
             rich.print(f"  • {name}: {start_12h} - {end_12h}{status}")
+    
+    # Show block exemptions (using your "exemption" format)
+    exempt_strategies = cfg.get("exemption", [])
+    
+    if exempt_strategies:
+        rich.print("\n[bold]Block-Exempt Strategies:[/]")
+        for strategy in exempt_strategies:
+            rich.print(f"  • [green]{strategy}[/]: Allowed during blocks")
+    else:
+        rich.print("\n[dim]No strategies are exempt from blocks[/]")
+    
+    rich.print(f"\n[dim]Tip: Add strategies to 'exemption' list in config.yaml to allow trading during blocks[/]")
 
 if __name__ == "__main__":
     app()
