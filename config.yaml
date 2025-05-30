@@ -46,19 +46,20 @@ prompt_triggers:
 
 prompts:
   # Core Market Analysis Prompts
+  #  if ends in ? it is a Y/N
   1_Stop-watch: "Are you going to sell it in 1 hour if no profit?"
   2_small_amount: "Is the potential loss acceptable?"
   3_One_Shot: "Are you only doing one purchase? Buying more will anchor you"
   4_45_degree_angles: "Any 45% angles? price, yellow? Have they been digested by 9EMA"
-  5_Red_50_SMVA: "Is the red-50 above below? With you against you?"
-  6_VWAP: "Was it abused recently? Is that good or bad?"
-  7_economic_events I: "Any major economic events today? (Fed, CPI, NFP, etc.)"
-  8_economic_events II: "Any 8:30AM (savior) economic events? This might anchor you, make you wait more than needed"
+  5_Red_50_SMVA: "Is the red-50 above below? With you against you:"
+  6_VWAP: "Was it abused recently? Is that good or bad:"
+  7_economic_events I: "Any major economic events today? (Fed, CPI, NFP, etc.)?"
+  8_economic_events II: "Any 8:30AM (savior) economic events? This might anchor you, make you wait more than needed:"
   9_auction: "Treasury auction (1PM) schedule affecting rates today?"
   10_earnings: "Major earnings releases this week that could impact market?"
-  11_fed_speakers: "Fed speakers scheduled today? (Check Fed calendar)"
+  11_fed_speakers: "Fed speakers scheduled today? (Check Fed calendar)?"
   12_market_conditions: "Current market conditions/sentiment? (Bullish/Bearish/Neutral)"
   13_volatility: "VIX level and volatility environment? (High/Normal/Low)"
-  14_invent_a_note_of_trade_going_wrong: "Write a note pretending trade went wrong"
-  15_real_note: "Write a note"
+  14_invent_a_note_of_trade_going_wrong: "Write a note pretending trade went wrong:"
+  15_real_note: "Write a note:"
   
