@@ -52,7 +52,110 @@ if added > 0:
     save_book(book)
 
 # Create trade operations handler (you'll need to create this file too)
-# trade_ops = TradeOperations(book, cfg)
+from trade_operations import TradeOperations
+trade_ops = TradeOperations(book, cfg)
+
+@app.command("open")
+def open_trade(
+    strat: str = typer.Option(None, help="Strategy"),
+    typ: str = typer.Option(None, help="FUTURE or OPTION"),
+    side: str = typer.Option(None, help="BUY or SELL"),
+    symbol: str = typer.Option(None, help="Ticker"),
+    qty: int = typer.Option(None, help="Contracts"),
+    price: str = typer.Option(None, help="Fill price"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Test mode: override blocks and don't save trade"),
+):
+    """Open a new trade"""
+    # Show dry run notice
+    if dry_run:
+        rich.print("[bold yellow]🧪 DRY RUN MODE - Trade will not be saved and blocks are ignored[/]")
+        rich.print()
+
+    # Enforce configured strategies
+    allowed = {s.upper() for s in cfg.get("strategies", [])}
+    while True:
+        if not strat:
+            strat = typer.prompt(f"Strategy ({', '.join(sorted(allowed))})")
+        u = strat.upper()
+        if u in allowed:
+            break
+        rich.print(f"[red]Unknown strategy: {strat!r}[/]")
+        rich.print(f"[green]Valid strategies are:[/] {', '.join(sorted(allowed))}")
+        strat = None  # force re-prompt
+
+    # Handle spread strategies
+    if u == "BULL-PUT":
+        trade_ops.open_bull_put_spread(qty, strat, dry_run=dry_run)
+    elif u == "BULL-PUT-OVERNIGHT":
+        trade_ops.open_bull_put_spread(qty, u, dry_run=dry_run)
+    elif u == "BEAR-CALL":
+        trade_ops.open_bear_call_spread(qty, dry_run=dry_run)
+    else:
+        # Handle single-leg trades
+        typ = typ or typer.prompt("Type", default="FUTURE")
+        side = side or typer.prompt("Side", default="BUY")
+        symbol = symbol or typer.prompt("Symbol")
+        qty = qty or int(typer.prompt("Quantity", default="1"))
+        price = price or typer.prompt("Entry price")
+        
+        trade_ops.open_single_leg_trade(strat, typ, side, symbol, qty, price, dry_run=dry_run)
+
+@app.command("close")
+def close_trade(
+    trade_id: str,
+    qty: int = typer.Option(None, help="Quantity to close (partial close)")
+):
+    """Close a trade completely or partially"""
+    trade_ops.close_trade_partial(trade_id, qty)
+
+@app.command("pnl2h")
+def record_2h_pnl(trade_id: str = typer.Option(None, help="Trade ID to record 2H PnL for")):
+    """Record 2-hour PnL for a trade (required for BULL-PUT-OVERNIGHT before closing)"""
+    # You'll need to implement this - similar to your original code
+    rich.print("2H PnL recording not yet implemented in modules")
+
+@app.command("fix")
+def fix_trade_prices(trade_id: str):
+    """Manually fix trade prices and recalculate PnL"""
+    
+    # Find the trade
+    trade = None
+    for t in book:
+        if t.id == trade_id:
+            trade = t
+            break
+    
+    if not trade:
+        rich.print(f"[red]Trade ID {trade_id} not found[/]")
+        return
+    
+    rich.print(f"[cyan]Fixing prices for trade {trade_id}[/]")
+    rich.print(f"Trade: {trade.strat} - {trade.typ}")
+    
+    # Show current leg details and allow editing
+    for i, leg in enumerate(trade.legs):
+        rich.print(f"\n[bold]Leg {i+1}: {leg.side} {leg.qty} {leg.symbol}[/]")
+        rich.print(f"  Current entry: ${leg.entry}")
+        
+        # Ask if they want to update entry price
+        if typer.confirm(f"Update entry price for {leg.symbol}?"):
+            new_entry = to_decimal(typer.prompt("New entry price"))
+            leg.entry = new_entry
+            rich.print(f"  ✓ Updated entry to ${new_entry}")
+        
+        # If trade is closed, allow updating exit price
+        if leg.exit is not None:
+            rich.print(f"  Current exit: ${leg.exit}")
+            if typer.confirm(f"Update exit price for {leg.symbol}?"):
+                new_exit = to_decimal(typer.prompt("New exit price"))
+                leg.exit = new_exit
+                rich.print(f"  ✓ Updated exit to ${new_exit}")
+    
+    # Recalculate and show results
+    rich.print(f"\n[cyan]Recalculating PnL...[/]")
+    recalc_trade_pnl(trade_id, book, show_details=True)
+
+
 
 @app.command("ls")
 def ls_command():
@@ -161,11 +264,18 @@ def show_option_blocks():
     
     rich.print("\n[bold]Configured Blocks:[/]")
     
+    def format_time_12h(time_str: str) -> str:
+        """Convert 24-hour time string to 12-hour format"""
+        time_obj = dt.time.fromisoformat(time_str)
+        return dt.datetime.combine(dt.date.today(), time_obj).strftime("%-I:%M %p")
+    
     if "option_block" in cfg:
         start = cfg["option_block"]["start"]
         end = cfg["option_block"]["end"]
         name = cfg["option_block"].get("name", "Legacy Block")
-        rich.print(f"  • {name}: {start} - {end}")
+        start_12h = format_time_12h(start)
+        end_12h = format_time_12h(end)
+        rich.print(f"  • {name}: {start_12h} - {end_12h}")
     
     if "option_blocks" in cfg:
         for block in cfg["option_blocks"]:
@@ -182,9 +292,11 @@ def show_option_blocks():
             else:
                 is_active = start_time <= now <= end_time
             
+            start_12h = format_time_12h(start)
+            end_12h = format_time_12h(end)
+            
             status = " [red](ACTIVE)[/]" if is_active else ""
-            rich.print(f"  • {name}: {start} - {end}{status}")
+            rich.print(f"  • {name}: {start_12h} - {end_12h}{status}")
 
 if __name__ == "__main__":
     app()
-

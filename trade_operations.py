@@ -1,41 +1,137 @@
-# trade_operations.py - Core trade operations with commission and fees
-"""Core trade operations like opening and closing trades with commission and fees"""
+# ═══════════════════════════════════════════════════════════════════
+# trade_operations.py - Core trade operations with configurable prompts
+# ═══════════════════════════════════════════════════════════════════
 
 import uuid
 import typer
 import rich
-from typing import Optional
+from typing import Optional, Dict, Any
 
 from models import Trade, Leg, Risk, CommissionFees
 from utils import to_decimal, blocked_for_options, now_utc, calc_trade_pnl, get_open_qty, can_partial_close, calculate_costs
 from persistence import save_book, write_single_trade_file
 
 class TradeOperations:
-    """Handles core trade operations like opening and closing with commission and fees"""
+    """Handles core trade operations like opening and closing with configurable prompts"""
     
     def __init__(self, book: list, cfg: dict):
         self.book = book
         self.cfg = cfg
     
-    def open_bull_put_spread(self, qty: Optional[int] = None, strat: str = "BULL-PUT"):
-        """Open a bull-put spread with commission and fees"""
-        is_blocked, block_name = blocked_for_options(self.cfg)
-        if is_blocked:
-            rich.print(f"[red]No options during {block_name}[/]")
-            raise typer.Exit()
+    def _get_risk_assessment(self, strategy: str = None) -> Risk:
+        """Get risk assessment using configurable prompts"""
+        prompts = self.cfg.get("prompts", {})
         
-        # Get risk assessment
-        econ = typer.confirm("Economic event?")
-        earn = typer.confirm("Big earnings / Earnings season?")
-        bond = typer.confirm("Bond auction 1PM (no bounce)?")
-        note = typer.prompt("Note", default="")
-        risk = Risk(econ, earn, bond, note)
+        # Use configurable prompts or fallback to defaults
+        econ_prompt = prompts.get("economic_events", "Economic event?")
+        earn_prompt = prompts.get("earnings", "Big earnings / Earnings season?")
+        auction_prompt = prompts.get("auction", "Bond auction 1PM (no bounce)?")
+        
+        # Get responses
+        econ = typer.confirm(econ_prompt)
+        earn = typer.confirm(earn_prompt)
+        bond = typer.confirm(auction_prompt)
+        
+        # Additional configurable prompts if enabled
+        additional_info = []
+        
+        if self.cfg.get("prompt_categories", {}).get("market_analysis", True):
+            # Market conditions
+            market_prompt = prompts.get("market_conditions", "Current market conditions/sentiment?")
+            market_response = typer.prompt(market_prompt, default="", show_default=False)
+            if market_response.strip():
+                additional_info.append(f"Market: {market_response}")
+            
+            # Volatility
+            vol_prompt = prompts.get("volatility", "VIX level and volatility environment?")
+            vol_response = typer.prompt(vol_prompt, default="", show_default=False)
+            if vol_response.strip():
+                additional_info.append(f"Vol: {vol_response}")
+        
+        # Strategy-specific prompts
+        if strategy and self.cfg.get("prompt_categories", {}).get("strategy_specific", True):
+            strategy_prompts = self._get_strategy_prompts(strategy)
+            for prompt_key, prompt_text in strategy_prompts.items():
+                response = typer.prompt(prompt_text, default="", show_default=False)
+                if response.strip():
+                    additional_info.append(f"{prompt_key}: {response}")
+        
+        # Risk management prompts
+        if self.cfg.get("prompt_categories", {}).get("risk_management", True):
+            pos_size_prompt = prompts.get("position_size", "Position size as % of account?")
+            pos_size = typer.prompt(pos_size_prompt, default="", show_default=False)
+            if pos_size.strip():
+                additional_info.append(f"Position size: {pos_size}")
+            
+            max_loss_prompt = prompts.get("max_loss", "Maximum acceptable loss for this trade?")
+            max_loss = typer.prompt(max_loss_prompt, default="", show_default=False)
+            if max_loss.strip():
+                additional_info.append(f"Max loss: {max_loss}")
+        
+        # Main note prompt
+        note_prompt = "Note"
+        if additional_info:
+            note_prompt += f" (Additional context: {'; '.join(additional_info)})"
+        
+        note = typer.prompt(note_prompt, default="")
+        
+        # Combine additional info with note
+        if additional_info and note:
+            note = f"{note} | {'; '.join(additional_info)}"
+        elif additional_info and not note:
+            note = '; '.join(additional_info)
+        
+        return Risk(econ, earn, bond, note)
+    
+    def _get_strategy_prompts(self, strategy: str) -> Dict[str, str]:
+        """Get strategy-specific prompts"""
+        prompts = self.cfg.get("prompts", {})
+        strategy_key = strategy.lower().replace("-", "_")
+        
+        return prompts.get(strategy_key, {})
+    
+    def _show_fed_speakers_prompt(self):
+        """Show Fed speakers prompt if configured"""
+        prompts = self.cfg.get("prompts", {})
+        if "fed_speakers" in prompts:
+            fed_prompt = prompts["fed_speakers"]
+            response = typer.prompt(fed_prompt, default="", show_default=False)
+            if response.strip():
+                rich.print(f"[yellow]Fed speakers: {response}[/]")
+    
+    def open_bull_put_spread(self, qty: Optional[int] = None, strat: str = "BULL-PUT", dry_run: bool = False):
+        """Open a bull-put spread with configurable prompts"""
+        # Check blocks only if not in dry run mode
+        if not dry_run:
+            is_blocked, block_name = blocked_for_options(self.cfg)
+            if is_blocked:
+                rich.print(f"[red]No options during {block_name}[/]")
+                raise typer.Exit()
+        elif blocked_for_options(self.cfg)[0]:
+            # Show block warning in dry run mode but continue
+            is_blocked, block_name = blocked_for_options(self.cfg)
+            rich.print(f"[yellow]⚠️  Would normally be blocked: {block_name} (ignored in dry-run)[/]")
+        
+        # Show Fed speakers prompt if configured
+        self._show_fed_speakers_prompt()
+        
+        # Get risk assessment with configurable prompts
+        risk = self._get_risk_assessment(strat)
         
         if risk.empty():
             rich.print("[red]Need risk checklist/note[/]")
             raise typer.Exit()
         
         qty = qty or int(typer.prompt("Quantity", default="1"))
+        
+        # Strategy-specific prompts for bull put
+        strategy_prompts = self._get_strategy_prompts("bull_put")
+        if strategy_prompts:
+            rich.print(f"\n[bold cyan]Bull Put Spread Setup[/]")
+            for prompt_key, prompt_text in strategy_prompts.items():
+                response = typer.prompt(prompt_text, default="", show_default=False)
+                if response.strip():
+                    rich.print(f"[dim]{prompt_key}: {response}[/]")
         
         typer.echo("---- Bull‑Put spread ----")
         s_sym = typer.prompt("Short‑put (SELL) symbol")
@@ -61,13 +157,18 @@ class TradeOperations:
             risk=risk
         )
         
-        self.book.append(trade)
-        save_book(self.book)
-        write_single_trade_file(trade)
+        # Only save if not in dry run mode
+        if not dry_run:
+            self.book.append(trade)
+            save_book(self.book)
+            write_single_trade_file(trade)
+            save_status = "saved"
+        else:
+            save_status = "NOT SAVED (dry-run)"
         
         # Show cost breakdown
         total_costs = trade.total_costs()
-        rich.print(f":rocket: Opened [cyan]{trade.id}[/] Bull‑Put x{qty}")
+        rich.print(f":rocket: {'[DRY RUN] ' if dry_run else ''}Opened [cyan]{trade.id}[/] Bull‑Put x{qty} - {save_status}")
         rich.print(f":money_with_wings: Entry costs: ${total_costs:.2f}")
         rich.print(f"  • Commission: ${short_costs.commission + long_costs.commission:.2f}")
         rich.print(f"  • Exchange fees: ${short_costs.exchange_fees + long_costs.exchange_fees:.2f}")
@@ -76,25 +177,39 @@ class TradeOperations:
         
         return trade
     
-    def open_bear_call_spread(self, qty: Optional[int] = None):
-        """Open a bear-call spread with commission and fees"""
-        is_blocked, block_name = blocked_for_options(self.cfg)
-        if is_blocked:
-            rich.print(f"[red]No options during {block_name}[/]")
-            raise typer.Exit()
+    def open_bear_call_spread(self, qty: Optional[int] = None, dry_run: bool = False):
+        """Open a bear-call spread with configurable prompts"""
+        # Check blocks only if not in dry run mode
+        if not dry_run:
+            is_blocked, block_name = blocked_for_options(self.cfg)
+            if is_blocked:
+                rich.print(f"[red]No options during {block_name}[/]")
+                raise typer.Exit()
+        elif blocked_for_options(self.cfg)[0]:
+            # Show block warning in dry run mode but continue
+            is_blocked, block_name = blocked_for_options(self.cfg)
+            rich.print(f"[yellow]⚠️  Would normally be blocked: {block_name} (ignored in dry-run)[/]")
         
-        # Get risk assessment
-        econ = typer.confirm("Economic event?")
-        earn = typer.confirm("Big earnings?")
-        bond = typer.confirm("Bond auction?")
-        note = typer.prompt("Note", default="")
-        risk = Risk(econ, earn, bond, note)
+        # Show Fed speakers prompt if configured
+        self._show_fed_speakers_prompt()
+        
+        # Get risk assessment with configurable prompts
+        risk = self._get_risk_assessment("BEAR-CALL")
         
         if risk.empty():
             rich.print("[red]Need risk checklist/note[/]")
             raise typer.Exit()
         
         qty = qty or int(typer.prompt("Quantity", default="1"))
+        
+        # Strategy-specific prompts for bear call
+        strategy_prompts = self._get_strategy_prompts("bear_call")
+        if strategy_prompts:
+            rich.print(f"\n[bold cyan]Bear Call Spread Setup[/]")
+            for prompt_key, prompt_text in strategy_prompts.items():
+                response = typer.prompt(prompt_text, default="", show_default=False)
+                if response.strip():
+                    rich.print(f"[dim]{prompt_key}: {response}[/]")
         
         typer.echo("---- Bear‑Call spread ----")
         s_sym = typer.prompt("Short‑call (SELL) symbol")
@@ -120,13 +235,18 @@ class TradeOperations:
             risk=risk
         )
         
-        self.book.append(trade)
-        save_book(self.book)
-        write_single_trade_file(trade)
+        # Only save if not in dry run mode
+        if not dry_run:
+            self.book.append(trade)
+            save_book(self.book)
+            write_single_trade_file(trade)
+            save_status = "saved"
+        else:
+            save_status = "NOT SAVED (dry-run)"
         
         # Show cost breakdown
         total_costs = trade.total_costs()
-        rich.print(f":rocket: Opened [cyan]{trade.id}[/] Bear‑Call x{qty}")
+        rich.print(f":rocket: {'[DRY RUN] ' if dry_run else ''}Opened [cyan]{trade.id}[/] Bear‑Call x{qty} - {save_status}")
         rich.print(f":money_with_wings: Entry costs: ${total_costs:.2f}")
         rich.print(f"  • Commission: ${short_costs.commission + long_costs.commission:.2f}")
         rich.print(f"  • Exchange fees: ${short_costs.exchange_fees + long_costs.exchange_fees:.2f}")
@@ -135,24 +255,29 @@ class TradeOperations:
         
         return trade
     
-    def open_single_leg_trade(self, strat: str, typ: str, side: str, symbol: str, qty: int, price: str):
-        """Open a single-leg trade (futures or options) with commission and fees"""
+    def open_single_leg_trade(self, strat: str, typ: str, side: str, symbol: str, qty: int, price: str, dry_run: bool = False):
+        """Open a single-leg trade (futures or options) with configurable prompts"""
         typ_u = typ.upper()
         
         if typ_u.startswith("OPTION"):
-            is_blocked, block_name = blocked_for_options(self.cfg)
-            if is_blocked:
-                rich.print(f"[red]No options during {block_name}[/]")
-                raise typer.Exit()
+            # Check blocks only if not in dry run mode
+            if not dry_run:
+                is_blocked, block_name = blocked_for_options(self.cfg)
+                if is_blocked:
+                    rich.print(f"[red]No options during {block_name}[/]")
+                    raise typer.Exit()
+            elif blocked_for_options(self.cfg)[0]:
+                # Show block warning in dry run mode but continue
+                is_blocked, block_name = blocked_for_options(self.cfg)
+                rich.print(f"[yellow]⚠️  Would normally be blocked: {block_name} (ignored in dry-run)[/]")
         
         risk = None
         if typ_u.startswith("OPTION"):
-            # Get risk assessment for options
-            econ = typer.confirm("Economic event?")
-            earn = typer.confirm("Big earnings?")
-            bond = typer.confirm("Bond auction?")
-            note = typer.prompt("Note", default="")
-            risk = Risk(econ, earn, bond, note)
+            # Show Fed speakers prompt if configured
+            self._show_fed_speakers_prompt()
+            
+            # Get risk assessment with configurable prompts for options
+            risk = self._get_risk_assessment(strat)
             
             if risk.empty():
                 rich.print("[red]Need risk checklist/note[/]")
@@ -167,7 +292,7 @@ class TradeOperations:
             side=side.upper(),
             qty=qty,
             entry=to_decimal(price),
-            multiplier=self.cfg["multipliers"].get(symbol.split("_")[0], 1),
+            multiplier=self.cfg.get("multipliers", {}).get(symbol.split("_")[0], 1),
             entry_costs=entry_costs
         )
         
@@ -180,12 +305,17 @@ class TradeOperations:
             risk=risk
         )
         
-        self.book.append(trade)
-        save_book(self.book)
-        write_single_trade_file(trade)
+        # Only save if not in dry run mode
+        if not dry_run:
+            self.book.append(trade)
+            save_book(self.book)
+            write_single_trade_file(trade)
+            save_status = "saved"
+        else:
+            save_status = "NOT SAVED (dry-run)"
         
         # Show cost breakdown
-        rich.print(f":rocket: Opened [cyan]{trade.id}[/]")
+        rich.print(f":rocket: {'[DRY RUN] ' if dry_run else ''}Opened [cyan]{trade.id}[/] - {save_status}")
         rich.print(f":money_with_wings: Entry costs: ${entry_costs.total():.2f}")
         rich.print(f"  • Commission: ${entry_costs.commission:.2f}")
         rich.print(f"  • Exchange fees: ${entry_costs.exchange_fees:.2f}")
@@ -195,7 +325,7 @@ class TradeOperations:
         return trade
     
     def close_trade_partial(self, trade_id: str, qty: Optional[int] = None):
-        """Close a trade completely or partially with commission and fees"""
+        """Close a trade completely or partially with configurable exit prompts"""
         tr = self._find_trade(trade_id)
         if not tr:
             rich.print("[red]ID not found[/]")
@@ -210,6 +340,11 @@ class TradeOperations:
             rich.print("[red]❌ Cannot close BULL-PUT-OVERNIGHT trade without 2H PnL data![/]")
             rich.print(f"Please run: blotter.py pnl2h {trade_id}")
             return False
+        
+        # Show exit analysis prompts only if explicitly enabled
+        if self.cfg.get("prompt_triggers", {}).get("on_exit", False):
+            if self.cfg.get("prompt_categories", {}).get("exit_planning", False):
+                self._show_exit_analysis()
         
         # Get current open quantity
         open_qty = get_open_qty(tr)
@@ -240,6 +375,32 @@ class TradeOperations:
         save_book(self.book)
         write_single_trade_file(tr)
         return True
+    
+    def _show_exit_analysis(self):
+        """Show exit analysis prompts if configured"""
+        prompts = self.cfg.get("prompts", {})
+        
+        rich.print(f"\n[bold cyan]Exit Analysis[/]")
+        
+        # Exit criteria
+        exit_prompt = prompts.get("exit_criteria", "Exit criteria (% profit, days to expiry, delta)?")
+        exit_response = typer.prompt(exit_prompt, default="", show_default=False)
+        if exit_response.strip():
+            rich.print(f"[dim]Exit criteria: {exit_response}[/]")
+        
+        # Early exit consideration
+        early_prompt = prompts.get("early_exit", "Consider early exit if 50% profit achieved?")
+        early_response = typer.confirm(early_prompt)
+        if early_response:
+            rich.print("[dim]Will consider early exit at 50% profit[/]")
+        
+        # Stop loss
+        stop_prompt = prompts.get("stop_loss", "Stop loss level (% of premium or underlying move)?")
+        stop_response = typer.prompt(stop_prompt, default="", show_default=False)
+        if stop_response.strip():
+            rich.print(f"[dim]Stop loss: {stop_response}[/]")
+        
+        print()  # Add spacing
     
     def _find_trade(self, trade_id: str):
         """Find a trade by ID"""

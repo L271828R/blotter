@@ -27,3 +27,22 @@ costs:
     commission_per_contract: "1.25"
     exchange_fees_per_contract: "0.50"
     regulatory_fees_per_contract: "0.02"
+
+
+# Trading System Configuration
+# Customize all prompts and settings here
+# Configurable Prompts - Customize these to match your trading style
+
+prompt_triggers:
+  on_entry: true   # Show prompts when opening trades (buying)
+  on_exit: false  
+
+prompts:
+  # Core Market Analysis Prompts
+  economic_events: "Any major economic events today? (Fed, CPI, NFP, etc.)"
+  auction: "Treasury auction schedule affecting rates today?"
+  earnings: "Major earnings releases this week that could impact market?"
+  fed_speakers: "Fed speakers scheduled today? (Check Fed calendar)"
+  market_conditions: "Current market conditions/sentiment? (Bullish/Bearish/Neutral)"
+  volatility: "VIX level and volatility environment? (High/Normal/Low)"
+  
