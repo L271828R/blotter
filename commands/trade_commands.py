@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# Updated commands/trade_commands.py - Historical trade entry with FZF strategy selection
+# Enhanced commands/trade_commands.py - Complete Strategy metadata integration
 # ═══════════════════════════════════════════════════════════════════
 
 import typer
@@ -8,10 +8,11 @@ import datetime as dt
 from typing import List
 
 from commands import cfg, book, trade_ops, stopwatch_manager
-from utils import blocked_for_options, to_decimal, check_time_against_blocks
+from utils import blocked_for_options, to_decimal, check_time_against_blocks, calculate_costs
 from persistence import save_book
 from ls import list_trades
 from recalc import recalc_trade_pnl
+from config import get_strategy_type, is_bull_put_spread, is_bear_call_spread, is_spread_strategy
 
 import sys
 import os
@@ -32,7 +33,7 @@ def open_trade(
     stopwatch: int = typer.Option(None, "--stopwatch", help="Start stopwatch timer (1 or 2 hours)"),
     historical: bool = typer.Option(False, "--historical", help="Enter historical trade with custom time"),
 ):
-    """Open a new trade"""
+    """Open a new trade with enhanced strategy handling"""
     # Check if globals are properly set
     if cfg is None or book is None or trade_ops is None:
         rich.print("[red]Error: Global configuration not properly initialized[/]")
@@ -51,150 +52,346 @@ def open_trade(
     # Strategy selection with FZF or fallback
     if not strat:
         # Try FZF first, then fallback to traditional prompt
+        rich.print("[cyan]🔍 Opening strategy selection with FZF...[/]")
         strat = select_strategy(book, config_path="strategies.txt", allow_custom=True)
         
-        if not strat:
-            # Fallback to traditional prompt with config strategies
-            allowed = {s.upper() for s in cfg.get("strategies", [])}
-            while True:
-                strat = typer.prompt(f"Strategy ({', '.join(sorted(allowed))})")
-                u = strat.upper()
-                if u in allowed:
-                    break
-                rich.print(f"[red]Unknown strategy: {strat!r}[/]")
-                rich.print(f"[green]Valid strategies are:[/] {', '.join(sorted(allowed))}")
-                strat = None  # force re-prompt
-    
-    # Validate strategy against config (if strat was provided via command line)
-    if strat:
-        allowed = {s.upper() for s in cfg.get("strategies", [])}
-        u = strat.upper()
-        if u not in allowed:
-            rich.print(f"[red]Unknown strategy: {strat!r}[/]")
-            rich.print(f"[green]Valid strategies are:[/] {', '.join(sorted(allowed))}")
-            # Try FZF selection again
-            strat = select_strategy(book, config_path="strategies.txt", allow_custom=True)
-            if not strat:
+        if strat:
+            rich.print(f"[green]✓ Selected strategy via FZF: '{strat}'[/]")
+        else:
+            rich.print("[yellow]No strategy selected via FZF, falling back to prompt[/]")
+            # Fallback to listing available strategies
+            strategies = cfg.get("strategies", {})
+            if strategies:
+                strategy_names = sorted(strategies.keys())
+                rich.print(f"[green]Available strategies:[/] {', '.join(strategy_names)}")
+                strat = typer.prompt("Strategy")
+            else:
+                rich.print("[red]No strategies configured[/]")
                 return
-            u = strat.upper()
+    else:
+        rich.print(f"[green]✓ Strategy provided via command line: '{strat}'[/]")
+    
+    # Get strategy metadata
+    strategy_info = get_strategy_type(strat, cfg)
+    strategy_type = strategy_info["type"]
+    
+    rich.print(f"\n[cyan]📋 Strategy Analysis:[/]")
+    rich.print(f"[cyan]  Name: {strat}[/]")
+    rich.print(f"[cyan]  Type: {strategy_type}[/]") 
+    rich.print(f"[cyan]  Default Trade Type: {strategy_info['default_type']}[/]")
+    rich.print(f"[cyan]  Default Side: {strategy_info['default_side']}[/]")
+
+    # Validate strategy exists in config
+    strategies = cfg.get("strategies", {})
+    if strat not in strategies:
+        rich.print(f"[red]❌ Unknown strategy: {strat!r}[/]")
+        rich.print(f"[yellow]Available strategies: {', '.join(sorted(strategies.keys()))}[/]")
+        return
 
     # Handle historical trade entry
     custom_entry_time = None
     custom_entry_date = None
     
     if historical:
-        rich.print("[bold cyan]⏰ Historical Trade Entry[/]")
+        custom_entry_time, custom_entry_date = get_historical_timestamp()
         
-        # Get the date
-        while True:
-            try:
-                date_input = typer.prompt("What date was this trade entered? (YYYY-MM-DD or MM-DD for this year)", default="today")
-                
-                if date_input.lower() == "today":
-                    custom_entry_date = dt.date.today()
-                elif len(date_input.split('-')) == 2:
-                    # MM-DD format, use current year
-                    month, day = map(int, date_input.split('-'))
-                    custom_entry_date = dt.date(dt.date.today().year, month, day)
-                else:
-                    # YYYY-MM-DD format
-                    custom_entry_date = dt.date.fromisoformat(date_input)
-                
-                rich.print(f"[green]✓ Using date: {custom_entry_date.strftime('%A, %B %d, %Y')}[/]")
-                break
-                
-            except ValueError:
-                rich.print("[red]Invalid date format. Please use YYYY-MM-DD or MM-DD[/]")
-        
-        # Get the time
-        while True:
-            try:
-                time_input = typer.prompt("What time was this trade entered? (HH:MM format, e.g., 14:30)")
-                # Parse the time
-                entry_hour, entry_minute = map(int, time_input.split(':'))
-                custom_entry_time = dt.time(entry_hour, entry_minute)
-                
-                # Validate it's a reasonable time (market hours)
-                if 6 <= entry_hour <= 23:  # Reasonable trading hours
-                    rich.print(f"[green]✓ Using time: {custom_entry_time.strftime('%I:%M %p')}[/]")
-                    break
-                else:
-                    rich.print("[red]Please enter a time between 06:00 and 23:00[/]")
-                    
-            except (ValueError, IndexError):
-                rich.print("[red]Invalid time format. Please use HH:MM (e.g., 14:30)[/]")
-        
-        # Show final timestamp
-        custom_datetime = dt.datetime.combine(custom_entry_date, custom_entry_time)
-        rich.print(f"[cyan]Final timestamp: {custom_datetime.strftime('%A, %B %d, %Y at %I:%M %p')}[/]")
-        
-        # Optional: Check if that time would have been blocked (for informational purposes)
-        if not dry_run and (typ == "OPTION" or (typ is None and u in ["BULL-PUT", "BULL-PUT-OVERNIGHT", "BEAR-CALL"])):
-            was_blocked_at_entry = check_time_against_blocks(custom_entry_time, cfg)
-            exempt_strategies = cfg.get("exemption", [])
-            is_exempt = u in [s.upper() for s in exempt_strategies]
-            
-            if was_blocked_at_entry and not is_exempt:
-                rich.print(f"[yellow]ℹ️  Note: {custom_entry_time.strftime('%I:%M %p')} would have been during a block period[/]")
-                rich.print(f"[yellow]   But you're entering this as historical data, so it's allowed[/]")
-            else:
-                rich.print(f"[green]ℹ️  {custom_entry_time.strftime('%I:%M %p')} was outside block periods[/]")
+        # Check if historical time would have been blocked (informational)
+        if not dry_run and is_option_strategy(strategy_type, typ):
+            check_historical_blocks(custom_entry_time, strat, cfg)
     
     else:
         # Normal (live) trade - check blocks as usual
-        if not dry_run and (typ == "OPTION" or (typ is None and u in ["BULL-PUT", "BULL-PUT-OVERNIGHT", "BEAR-CALL"])):
-            is_blocked, active_block = blocked_for_options(cfg)
-            
-            # Check if strategy is exempt from blocks
-            exempt_strategies = cfg.get("exemption", [])
-            is_exempt = u in [s.upper() for s in exempt_strategies]
-            
-            if is_blocked and not is_exempt:
-                rich.print(f"[red]🚫 Option trading is currently blocked: {active_block}[/]")
-                rich.print("[yellow]Use --historical if you want to enter a trade from earlier[/]")
-                return
+        if not dry_run and is_option_strategy(strategy_type, typ):
+            if check_current_blocks(strat, cfg):
+                return  # Blocked
 
-    # Handle spread strategies and get the trade object back
+    # Route to appropriate trade opening method based on strategy type
     trade = None
-    if u == "BULL-PUT":
-        trade = trade_ops.open_bull_put_spread(qty, strat, dry_run=dry_run, 
-                                             custom_entry_time=custom_entry_time, 
-                                             custom_entry_date=custom_entry_date)
-    elif u == "BULL-PUT-OVERNIGHT":
-        trade = trade_ops.open_bull_put_spread(qty, u, dry_run=dry_run, 
-                                             custom_entry_time=custom_entry_time, 
-                                             custom_entry_date=custom_entry_date)
-    elif u == "BEAR-CALL":
-        trade = trade_ops.open_bear_call_spread(qty, dry_run=dry_run, 
-                                              custom_entry_time=custom_entry_time, 
-                                              custom_entry_date=custom_entry_date)
-    else:
-        # Handle single-leg trades
-        typ = typ or typer.prompt("Type", default="FUTURE")
-        side = side or typer.prompt("Side", default="BUY")
+    
+    rich.print(f"\n[bold]🚀 Opening {strategy_type.replace('_', ' ').title()}...[/]")
+    
+    if strategy_type == "bull_put_spread":
+        # Get quantity for spread
+        qty = qty or int(typer.prompt("Number of spreads", default="1"))
+        
+        rich.print(f"[cyan]Routing to Bull Put Spread handler...[/]")
+        trade = trade_ops.open_bull_put_spread_enhanced(
+            qty=qty, 
+            strat=strat, 
+            dry_run=dry_run,
+            custom_entry_time=custom_entry_time,
+            custom_entry_date=custom_entry_date
+        )
+        
+    elif strategy_type == "bear_call_spread":
+        # Get quantity for spread
+        qty = qty or int(typer.prompt("Number of spreads", default="1"))
+        
+        rich.print(f"[cyan]Routing to Bear Call Spread handler...[/]")
+        trade = trade_ops.open_bear_call_spread_enhanced(
+            qty=qty,
+            strat=strat, 
+            dry_run=dry_run,
+            custom_entry_time=custom_entry_time,
+            custom_entry_date=custom_entry_date
+        )
+        
+    else:  # single_leg
+        rich.print(f"[cyan]Routing to Single Leg handler...[/]")
+        
+        # Use strategy defaults to reduce prompting
+        typ = typ or strategy_info["default_type"]
+        side = side or strategy_info["default_side"]
+        
+        # Prompt for any missing required fields
+        if not typ:
+            typ = typer.prompt("Type (FUTURE/OPTION)", default="FUTURE")
+        if not side:
+            side = typer.prompt("Side (BUY/SELL)", default="BUY")
+        
         symbol = symbol or typer.prompt("Symbol")
         qty = qty or int(typer.prompt("Quantity", default="1"))
         price = price or typer.prompt("Entry price")
         
-        trade = trade_ops.open_single_leg_trade(strat, typ, side, symbol, qty, price, dry_run=dry_run, 
-                                              custom_entry_time=custom_entry_time, 
-                                              custom_entry_date=custom_entry_date)
+        rich.print(f"[dim]Using defaults from strategy: {typ} {side}[/]")
+        
+        trade = trade_ops.open_single_leg_trade(
+            strat=strat, 
+            typ=typ, 
+            side=side, 
+            symbol=symbol, 
+            qty=qty, 
+            price=price,
+            dry_run=dry_run,
+            custom_entry_time=custom_entry_time,
+            custom_entry_date=custom_entry_date
+        )
     
     # Start stopwatch if requested and it's an option trade (only for live trades)
-    if trade and not dry_run and not historical and trade.typ.startswith("OPTION"):
-        # Ask for stopwatch if not provided and it's an option
-        if stopwatch is None:
-            if typer.confirm("Start risk management stopwatch for this option?"):
-                stopwatch = typer.prompt("Hours (1 or 2)", type=int, default=1)
-        
-        if stopwatch:
-            if stopwatch in [1, 2]:
-                stopwatch_manager.start_stopwatch(trade.id, stopwatch)
-            else:
-                rich.print("[red]Stopwatch must be 1 or 2 hours[/]")
-    elif historical and trade and trade.typ.startswith("OPTION"):
+    if trade and not dry_run and not historical and is_option_trade(trade):
+        handle_stopwatch(trade, stopwatch)
+    elif historical and trade and is_option_trade(trade):
         rich.print("[dim]Note: No stopwatch started for historical trades[/]")
 
+def get_historical_timestamp():
+    """Get historical timestamp from user input"""
+    rich.print("[bold cyan]⏰ Historical Trade Entry[/]")
+    
+    # Get the date
+    while True:
+        try:
+            date_input = typer.prompt("What date was this trade entered? (YYYY-MM-DD or MM-DD for this year)", default="today")
+            
+            if date_input.lower() == "today":
+                custom_entry_date = dt.date.today()
+            elif len(date_input.split('-')) == 2:
+                # MM-DD format, use current year
+                month, day = map(int, date_input.split('-'))
+                custom_entry_date = dt.date(dt.date.today().year, month, day)
+            else:
+                # YYYY-MM-DD format
+                custom_entry_date = dt.date.fromisoformat(date_input)
+            
+            rich.print(f"[green]✓ Using date: {custom_entry_date.strftime('%A, %B %d, %Y')}[/]")
+            break
+            
+        except ValueError:
+            rich.print("[red]Invalid date format. Please use YYYY-MM-DD or MM-DD[/]")
+    
+    # Get the time
+    while True:
+        try:
+            time_input = typer.prompt("What time was this trade entered? (HH:MM format, e.g., 14:30)")
+            # Parse the time
+            entry_hour, entry_minute = map(int, time_input.split(':'))
+            custom_entry_time = dt.time(entry_hour, entry_minute)
+            
+            # Validate it's a reasonable time (market hours)
+            if 6 <= entry_hour <= 23:  # Reasonable trading hours
+                rich.print(f"[green]✓ Using time: {custom_entry_time.strftime('%I:%M %p')}[/]")
+                break
+            else:
+                rich.print("[red]Please enter a time between 06:00 and 23:00[/]")
+                
+        except (ValueError, IndexError):
+            rich.print("[red]Invalid time format. Please use HH:MM (e.g., 14:30)[/]")
+    
+    # Show final timestamp
+    custom_datetime = dt.datetime.combine(custom_entry_date, custom_entry_time)
+    rich.print(f"[cyan]Final timestamp: {custom_datetime.strftime('%A, %B %d, %Y at %I:%M %p')}[/]")
+    
+    return custom_entry_time, custom_entry_date
+
+def is_option_strategy(strategy_type, typ=None):
+    """Check if strategy involves options"""
+    if strategy_type in ["bull_put_spread", "bear_call_spread"]:
+        return True
+    return typ == "OPTION"
+
+def is_option_trade(trade):
+    """Check if trade involves options"""
+    return trade.typ.startswith("OPTION") if trade else False
+
+def check_historical_blocks(custom_entry_time, strat, cfg):
+    """Check if historical time would have been blocked (informational only)"""
+    was_blocked_at_entry = check_time_against_blocks(custom_entry_time, cfg)
+    exempt_strategies = cfg.get("exemption", [])
+    is_exempt = strat in exempt_strategies
+    
+    if was_blocked_at_entry and not is_exempt:
+        rich.print(f"[yellow]ℹ️  Note: {custom_entry_time.strftime('%I:%M %p')} would have been during a block period[/]")
+        rich.print(f"[yellow]   But you're entering this as historical data, so it's allowed[/]")
+    else:
+        rich.print(f"[green]ℹ️  {custom_entry_time.strftime('%I:%M %p')} was outside block periods[/]")
+
+def check_current_blocks(strat, cfg):
+    """Check if current time is blocked for options. Returns True if blocked."""
+    is_blocked, active_block = blocked_for_options(cfg)
+    
+    # Check if strategy is exempt from blocks
+    exempt_strategies = cfg.get("exemption", [])
+    is_exempt = strat in exempt_strategies
+    
+    if is_blocked and not is_exempt:
+        rich.print(f"[red]🚫 Option trading is currently blocked: {active_block}[/]")
+        rich.print("[yellow]Use --historical if you want to enter a trade from earlier[/]")
+        return True
+    
+    return False
+
+def handle_stopwatch(trade, stopwatch):
+    """Handle stopwatch setup for option trades"""
+    # Ask for stopwatch if not provided and it's an option
+    if stopwatch is None:
+        if typer.confirm("Start risk management stopwatch for this option?"):
+            stopwatch = typer.prompt("Hours (1 or 2)", type=int, default=1)
+    
+    if stopwatch:
+        if stopwatch in [1, 2]:
+            stopwatch_manager.start_stopwatch(trade.id, stopwatch)
+        else:
+            rich.print("[red]Stopwatch must be 1 or 2 hours[/]")
+
+# Add new commands for spread management
+@trade_app.command("close-leg")
+def close_single_leg(
+    trade_id: str,
+    leg_symbol: str,
+    exit_price: float,
+    reason: str = typer.Option("Leg management", help="Reason for closing single leg")
+):
+    """Close individual leg of a spread"""
+    
+    trade = find_trade(trade_id)
+    if not trade:
+        rich.print(f"[red]Trade {trade_id} not found[/]")
+        return
+    
+    # Find the specific leg
+    for leg in trade.legs:
+        if leg.symbol == leg_symbol:
+            if leg.exit is not None:
+                rich.print(f"[red]Leg {leg_symbol} already closed[/]")
+                return
+            
+            # Close this leg
+            leg.exit = to_decimal(exit_price)
+            leg.exit_costs = calculate_costs("OPTION", leg.qty, cfg)
+            
+            rich.print(f"[green]✓ Closed leg {leg_symbol} at ${exit_price}[/]")
+            rich.print(f"[green]  Reason: {reason}[/]")
+            
+            # Calculate leg P&L
+            leg_pnl = calculate_leg_pnl(leg)
+            rich.print(f"[green]  Leg P&L: ${leg_pnl:+.2f}[/]")
+            
+            # Check if all legs are closed
+            open_legs = [l for l in trade.legs if l.exit is None]
+            if not open_legs:
+                trade.status = "CLOSED"
+                trade.pnl = trade.net_pnl()
+                rich.print(f"[green]✓ All legs closed - spread complete[/]")
+                rich.print(f"[green]  Total P&L: ${trade.pnl:+.2f}[/]")
+            else:
+                rich.print(f"[yellow]  {len(open_legs)} legs still open[/]")
+            
+            save_book(book)
+            return
+    
+    rich.print(f"[red]Leg {leg_symbol} not found in trade {trade_id}[/]")
+
+@trade_app.command("expire-leg")
+def expire_leg(
+    trade_id: str,
+    leg_symbol: str
+):
+    """Mark option leg as expired (automatically sets exit price to 0)"""
+    
+    trade = find_trade(trade_id)
+    if not trade:
+        rich.print(f"[red]Trade {trade_id} not found[/]")
+        return
+    
+    # Find the specific leg
+    for leg in trade.legs:
+        if leg.symbol == leg_symbol:
+            if leg.exit is not None:
+                rich.print(f"[red]Leg {leg_symbol} already closed[/]")
+                return
+            
+            # Mark as expired
+            leg.exit = to_decimal("0.00")
+            leg.exit_costs = calculate_costs("OPTION", leg.qty, cfg)
+            
+            rich.print(f"[green]✓ Leg {leg_symbol} marked as expired (value: $0.00)[/]")
+            
+            # Calculate leg P&L
+            leg_pnl = calculate_leg_pnl(leg)
+            rich.print(f"[green]  Leg P&L: ${leg_pnl:+.2f}[/]")
+            
+            # Check if all legs are closed
+            open_legs = [l for l in trade.legs if l.exit is None]
+            if not open_legs:
+                trade.status = "CLOSED"
+                trade.pnl = trade.net_pnl()
+                rich.print(f"[green]✓ All legs closed - spread complete[/]")
+                rich.print(f"[green]  Total P&L: ${trade.pnl:+.2f}[/]")
+            else:
+                rich.print(f"[yellow]  {len(open_legs)} legs still open[/]")
+            
+            save_book(book)
+            return
+    
+    rich.print(f"[red]Leg {leg_symbol} not found in trade {trade_id}[/]")
+
+def find_trade(trade_id):
+    """Find a trade by ID"""
+    for trade in book:
+        if trade.id == trade_id:
+            return trade
+    return None
+
+def calculate_leg_pnl(leg):
+    """Calculate P&L for a single leg"""
+    if not leg.exit:
+        return 0  # Still open
+    
+    gross_diff = leg.exit - leg.entry
+    
+    if leg.side == "BUY":
+        # You bought first, sold later: profit when exit > entry
+        pnl = gross_diff * leg.qty * leg.multiplier
+    else:  # leg.side == "SELL" 
+        # You sold first, bought back later: profit when entry > exit
+        pnl = -gross_diff * leg.qty * leg.multiplier
+    
+    # Subtract costs
+    entry_costs = leg.entry_costs.total() if leg.entry_costs else 0
+    exit_costs = leg.exit_costs.total() if leg.exit_costs else 0
+    
+    return float(pnl) - float(entry_costs) - float(exit_costs)
+
+# Existing commands with minimal changes
 @trade_app.command("close")
 def close_trade(
     trade_id: str,
@@ -204,7 +401,63 @@ def close_trade(
     if trade_ops is None:
         rich.print("[red]Error: Global configuration not properly initialized[/]")
         return
-    trade_ops.close_trade_partial(trade_id, qty)
+    
+    trade = find_trade(trade_id)
+    if not trade:
+        rich.print(f"[red]Trade {trade_id} not found[/]")
+        return
+    
+    # Check if it's a spread - offer different closing options
+    if len(trade.legs) > 1 and is_spread_strategy(trade.strat, cfg):
+        rich.print(f"[cyan]Closing {trade.strat} spread: {trade_id}[/]")
+        rich.print("1. Close entire spread with net debit")
+        rich.print("2. Close with individual leg prices")
+        
+        choice = input("Choose method (1 or 2): ").strip()
+        
+        if choice == "1":
+            net_debit = float(input("Net debit to close spread: ").strip())
+            close_spread_with_net_debit(trade, net_debit)
+        else:
+            # Use existing close logic for individual prices
+            trade_ops.close_trade_partial(trade_id, qty)
+    else:
+        # Single leg trade - use existing logic
+        trade_ops.close_trade_partial(trade_id, qty)
+
+def close_spread_with_net_debit(trade, net_debit):
+    """Close spread using net debit"""
+    # Estimate individual leg prices from net debit
+    # This is a simplified approach - you could make it more sophisticated
+    
+    rich.print(f"[yellow]Estimating individual leg prices from net debit of ${net_debit}[/]")
+    
+    for i, leg in enumerate(trade.legs):
+        if leg.exit is None:
+            # Simple estimation - distribute net debit proportionally
+            if len(trade.legs) == 2:
+                if leg.side == "SELL":
+                    # For short leg, assume most of the debit
+                    estimated_exit = leg.entry + (net_debit * 0.8)
+                else:
+                    # For long leg, assume smaller portion
+                    estimated_exit = leg.entry - (net_debit * 0.2)
+            else:
+                # For more complex spreads, distribute evenly
+                estimated_exit = leg.entry + (net_debit / len(trade.legs))
+            
+            leg.exit = to_decimal(estimated_exit)
+            leg.exit_costs = calculate_costs("OPTION", leg.qty, cfg)
+            
+            rich.print(f"[yellow]  Estimated {leg.symbol} exit: ${estimated_exit:.2f}[/]")
+    
+    # Mark trade as closed
+    trade.status = "CLOSED"
+    trade.pnl = trade.net_pnl()
+    save_book(book)
+    
+    rich.print(f"[green]✓ Spread closed with net debit of ${net_debit}[/]")
+    rich.print(f"[green]  Total P&L: ${trade.pnl:+.2f}[/]")
 
 @trade_app.command("fix")
 def fix_trade_prices(trade_id: str):
@@ -214,12 +467,7 @@ def fix_trade_prices(trade_id: str):
         return
     
     # Find the trade
-    trade = None
-    for t in book:
-        if t.id == trade_id:
-            trade = t
-            break
-    
+    trade = find_trade(trade_id)
     if not trade:
         rich.print(f"[red]Trade ID {trade_id} not found[/]")
         return
@@ -274,17 +522,16 @@ def delete_trade(
         return
     
     # Find the trade
-    trade = None
-    trade_index = None
-    for i, t in enumerate(book):
-        if t.id == trade_id:
-            trade = t
-            trade_index = i
-            break
-    
+    trade = find_trade(trade_id)
     if not trade:
         rich.print(f"[red]Trade ID {trade_id} not found[/]")
         return
+    
+    trade_index = None
+    for i, t in enumerate(book):
+        if t.id == trade_id:
+            trade_index = i
+            break
     
     # Show trade details
     rich.print(f"\n[bold red]⚠️  DELETE TRADE {trade_id}[/]")
@@ -328,3 +575,32 @@ def delete_trade(
     save_book(book)
     
     rich.print(f"[green]✓ Trade {trade_id} deleted successfully[/]")
+
+# Add strategy management commands
+@trade_app.command("add-strategy")
+def add_strategy_command(
+    name: str,
+    strategy_type: str = typer.Option("single_leg", help="Strategy type: single_leg, bull_put_spread, bear_call_spread"),
+    default_type: str = typer.Option(None, help="Default trade type: FUTURE, OPTION"),
+    default_side: str = typer.Option(None, help="Default side: BUY, SELL")
+):
+    """Add a new strategy to configuration"""
+    from config import add_strategy
+    add_strategy(name, strategy_type, default_type, default_side)
+
+@trade_app.command("fix-strategy")
+def fix_strategy_command(
+    name: str,
+    strategy_type: str = typer.Option(help="New strategy type: single_leg, bull_put_spread, bear_call_spread")
+):
+    """Fix strategy type after migration"""
+    from config import fix_strategy_type
+    fix_strategy_type(name, strategy_type, cfg)
+
+@trade_app.command("list-strategies")
+def list_strategies_command(
+    strategy_type: str = typer.Option(None, help="Filter by type: single_leg, bull_put_spread, bear_call_spread")
+):
+    """List configured strategies"""
+    from config import list_strategies
+    list_strategies(cfg, strategy_type)

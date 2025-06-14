@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# trade_operations.py - Complete implementation with historical support
+# Enhanced trade_operations.py - Bull Put Spread with Net Credit Entry
 # ═══════════════════════════════════════════════════════════════════
 
 import datetime as dt
@@ -7,6 +7,7 @@ import rich
 import uuid
 import hashlib
 from decimal import Decimal
+import typer
 
 from models import Trade, Leg, Risk, CommissionFees
 from utils import to_decimal, calculate_costs, now_utc, blocked_for_options
@@ -40,76 +41,29 @@ class TradeOperations:
         
         return trade_timestamp
     
-    def open_single_leg_trade(self, strat, typ, side, symbol, qty, price, dry_run=False, 
-                             custom_entry_time=None, custom_entry_date=None):
-        """Open a single-leg trade with optional custom date and time"""
+    def auto_estimate_leg_prices(self, short_strike, long_strike, net_credit):
+        """Auto-estimate individual leg prices from net credit"""
+        short_strike = float(short_strike)
+        long_strike = float(long_strike)
+        net_credit = Decimal(str(net_credit))
         
-        # Create timestamp
-        trade_timestamp = self._create_timestamp(custom_entry_time, custom_entry_date)
+        # Simple estimation logic
+        strike_diff = short_strike - long_strike  # e.g., 5990 - 5970 = 20
         
-        # Generate trade ID
-        trade_id = self._generate_trade_id()
-        
-        # Validate inputs
-        if not all([strat, typ, side, symbol, qty, price]):
-            rich.print("[red]Error: Missing required trade parameters[/]")
-            return None
-        
-        # Convert price to decimal
-        entry_price = to_decimal(price)
-        if entry_price is None:
-            rich.print(f"[red]Error: Invalid price format: {price}[/]")
-            return None
-        
-        # Get multiplier from config
-        symbol_base = symbol.split("_")[0]  # e.g., "MES" from "MES_C_6000"
-        multiplier = self.cfg.get("multipliers", {}).get(symbol_base, 1)
-        
-        # Calculate costs
-        entry_costs = calculate_costs(typ, qty, self.cfg)
-        
-        # Create leg
-        leg = Leg(
-            symbol=symbol,
-            side=side.upper(),
-            qty=qty,
-            entry=entry_price,
-            exit=None,
-            multiplier=multiplier,
-            entry_costs=entry_costs,
-            exit_costs=None
-        )
-        
-        # Create trade
-        trade = Trade(
-            id=trade_id,
-            ts=trade_timestamp,
-            typ=typ.upper(),
-            strat=strat.upper(),
-            status="OPEN",
-            legs=[leg],
-            pnl=None,
-            risk=None
-        )
-        
-        # Save trade unless dry run
-        if not dry_run:
-            self.book.append(trade)
-            save_book(self.book)
-            write_single_trade_file(trade)
-            
-            rich.print(f"[green]✓ {typ} {side} trade opened: {trade_id}[/]")
-            rich.print(f"[green]  Symbol: {symbol} | Qty: {qty} | Price: ${entry_price}[/]")
-            rich.print(f"[green]  Costs: ${entry_costs.total():.2f}[/]")
+        if strike_diff <= 25:
+            # Narrow spread - long probably worth very little
+            estimated_long = Decimal("0.10")
+            estimated_short = net_credit + estimated_long
         else:
-            rich.print(f"[yellow]DRY RUN: Would create {typ} {side} trade {trade_id}[/]")
-            rich.print(f"[yellow]  Symbol: {symbol} | Qty: {qty} | Price: ${entry_price}[/]")
+            # Wider spread - distribute more proportionally
+            estimated_long = net_credit * Decimal("0.15")  # 15% of net credit
+            estimated_short = net_credit + estimated_long
         
-        return trade
+        return estimated_short, estimated_long
     
-    def open_bull_put_spread(self, qty, strat, dry_run=False, 
-                            custom_entry_time=None, custom_entry_date=None):
-        """Open bull put spread with optional custom date and time"""
+    def open_bull_put_spread_enhanced(self, qty, strat, dry_run=False, 
+                                    custom_entry_time=None, custom_entry_date=None):
+        """Enhanced Bull Put Spread with flexible entry modes"""
         
         # Create timestamp
         trade_timestamp = self._create_timestamp(custom_entry_time, custom_entry_date)
@@ -119,26 +73,96 @@ class TradeOperations:
         
         rich.print(f"[cyan]Opening Bull Put Spread ({strat})[/]")
         
-        # Get strikes and prices interactively
-        rich.print("\n[bold]Short Put (Sell) - Higher Strike:[/]")
-        short_symbol = input("Short put symbol (e.g., MES_P_5850): ").strip()
-        short_price = to_decimal(input("Short put price (premium received): ").strip())
+        # Choose entry mode
+        rich.print("\n[bold]Entry Mode:[/]")
+        rich.print("1. Net Credit (what you see on broker)")
+        rich.print("2. Individual Leg Prices")
         
-        rich.print("\n[bold]Long Put (Buy) - Lower Strike:[/]")
-        long_symbol = input("Long put symbol (e.g., MES_P_5800): ").strip()
-        long_price = to_decimal(input("Long put price (premium paid): ").strip())
+        while True:
+            mode = input("Choose mode (1 or 2): ").strip()
+            if mode in ["1", "2"]:
+                break
+            rich.print("[red]Please enter 1 or 2[/]")
         
-        if not all([short_symbol, short_price, long_symbol, long_price]):
-            rich.print("[red]Error: Missing required spread parameters[/]")
+        # Get strikes first (common to both modes)
+        rich.print("\n[bold]Strike Information:[/]")
+        short_strike = input("Short put strike (sell/higher): ").strip()
+        long_strike = input("Long put strike (buy/lower): ").strip()
+        
+        # Validate strikes
+        try:
+            short_strike_float = float(short_strike)
+            long_strike_float = float(long_strike)
+            if short_strike_float <= long_strike_float:
+                rich.print("[red]Error: Short strike must be higher than long strike[/]")
+                return None
+        except ValueError:
+            rich.print("[red]Error: Invalid strike format[/]")
             return None
         
+        if mode == "1":
+            # NET CREDIT MODE
+            rich.print(f"\n[bold]Net Credit Mode:[/]")
+            net_credit_input = input("Net credit received: ").strip()
+            net_credit = to_decimal(net_credit_input)
+            
+            if net_credit is None or net_credit <= 0:
+                rich.print("[red]Error: Invalid net credit[/]")
+                return None
+            
+            rich.print(f"\n[yellow]Auto-estimating individual leg prices for tracking...[/]")
+            estimated_short, estimated_long = self.auto_estimate_leg_prices(
+                short_strike, long_strike, net_credit
+            )
+            
+            rich.print(f"[green]Estimated short put ({short_strike}): ${estimated_short}[/]")
+            rich.print(f"[green]Estimated long put ({long_strike}): ${estimated_long}[/]")
+            rich.print(f"[green]Net credit: ${net_credit} ✓[/]")
+            
+            # Confirm estimates
+            if not typer.confirm("\nDo these estimates look reasonable?", default=True):
+                rich.print("\n[yellow]Please provide better estimates:[/]")
+                long_price_input = input(f"Long put {long_strike} price: ").strip()
+                estimated_long = to_decimal(long_price_input)
+                estimated_short = net_credit + estimated_long
+                rich.print(f"[green]Recalculated short put price: ${estimated_short}[/]")
+            
+            short_price = estimated_short
+            long_price = estimated_long
+        
+        else:
+            # INDIVIDUAL LEG PRICES MODE
+            rich.print(f"\n[bold]Individual Leg Prices:[/]")
+            short_price_input = input(f"Short put {short_strike} price (premium received): ").strip()
+            long_price_input = input(f"Long put {long_strike} price (premium paid): ").strip()
+            
+            short_price = to_decimal(short_price_input)
+            long_price = to_decimal(long_price_input)
+            
+            if short_price is None or long_price is None:
+                rich.print("[red]Error: Invalid price format[/]")
+                return None
+            
+            # Calculate net credit for verification
+            net_credit = short_price - long_price
+            rich.print(f"[green]Calculated net credit: ${net_credit}[/]")
+            
+            if net_credit <= 0:
+                rich.print("[red]Warning: Net credit is not positive. Check your prices.[/]")
+                if not typer.confirm("Continue anyway?"):
+                    return None
+        
         # Get multiplier from config
-        symbol_base = short_symbol.split("_")[0]  # e.g., "MES" from "MES_P_5850"
-        multiplier = self.cfg.get("multipliers", {}).get(symbol_base, 1)
+        symbol_base = "MES"  # Default for MES options
+        multiplier = self.cfg.get("multipliers", {}).get("MES", 5)
         
         # Calculate costs for each leg
         short_costs = calculate_costs("OPTION", qty, self.cfg)
         long_costs = calculate_costs("OPTION", qty, self.cfg)
+        
+        # Build symbols
+        short_symbol = f"MES_P_{short_strike}"
+        long_symbol = f"MES_P_{long_strike}"
         
         # Create legs
         short_leg = Leg(
@@ -175,10 +199,12 @@ class TradeOperations:
             risk=None
         )
         
-        # Calculate net credit/debit
-        net_premium = (short_price - long_price) * qty * multiplier
+        # Calculate trade metrics - convert all to Decimal for consistency
+        strike_diff = Decimal(str(short_strike_float - long_strike_float))  # For bull put: should be positive
+        total_premium = (short_price - long_price) * qty * multiplier
         total_costs = short_costs.total() + long_costs.total()
-        net_credit = net_premium - total_costs
+        net_credit_amount = total_premium - total_costs
+        max_risk = (strike_diff * qty * multiplier) - net_credit_amount
         
         # Save trade unless dry run
         if not dry_run:
@@ -186,20 +212,21 @@ class TradeOperations:
             save_book(self.book)
             write_single_trade_file(trade)
             
-            rich.print(f"[green]✓ Bull Put Spread opened: {trade_id}[/]")
-            rich.print(f"[green]  Short: {short_symbol} @ ${short_price} (SELL)[/]")
-            rich.print(f"[green]  Long:  {long_symbol} @ ${long_price} (BUY)[/]")
-            rich.print(f"[green]  Net Credit: ${net_credit:.2f} (after costs)[/]")
+            rich.print(f"\n[green]✓ Bull Put Spread opened: {trade_id}[/]")
+            rich.print(f"[green]  Short: SELL {qty} {short_symbol} @ ${short_price}[/]")
+            rich.print(f"[green]  Long:  BUY {qty} {long_symbol} @ ${long_price}[/]")
+            rich.print(f"[green]  Net Credit: ${net_credit_amount:.2f} (after costs)[/]")
+            rich.print(f"[green]  Max Risk: ${max_risk:.2f}[/]")
             rich.print(f"[green]  Total Costs: ${total_costs:.2f}[/]")
         else:
-            rich.print(f"[yellow]DRY RUN: Would create Bull Put Spread {trade_id}[/]")
-            rich.print(f"[yellow]  Net Credit: ${net_credit:.2f}[/]")
+            rich.print(f"\n[yellow]DRY RUN: Would create Bull Put Spread {trade_id}[/]")
+            rich.print(f"[yellow]  Net Credit: ${net_credit_amount:.2f}[/]")
         
         return trade
     
-    def open_bear_call_spread(self, qty, dry_run=False, 
-                             custom_entry_time=None, custom_entry_date=None):
-        """Open bear call spread with optional custom date and time"""
+    def open_bear_call_spread_enhanced(self, qty, strat, dry_run=False, 
+                                     custom_entry_time=None, custom_entry_date=None):
+        """Enhanced Bear Call Spread with flexible entry modes"""
         
         # Create timestamp
         trade_timestamp = self._create_timestamp(custom_entry_time, custom_entry_date)
@@ -207,28 +234,98 @@ class TradeOperations:
         # Generate trade ID
         trade_id = self._generate_trade_id()
         
-        rich.print(f"[cyan]Opening Bear Call Spread[/]")
+        rich.print(f"[cyan]Opening Bear Call Spread ({strat})[/]")
         
-        # Get strikes and prices interactively
-        rich.print("\n[bold]Short Call (Sell) - Lower Strike:[/]")
-        short_symbol = input("Short call symbol (e.g., MES_C_6000): ").strip()
-        short_price = to_decimal(input("Short call price (premium received): ").strip())
+        # Choose entry mode
+        rich.print("\n[bold]Entry Mode:[/]")
+        rich.print("1. Net Credit (what you see on broker)")
+        rich.print("2. Individual Leg Prices")
         
-        rich.print("\n[bold]Long Call (Buy) - Higher Strike:[/]")
-        long_symbol = input("Long call symbol (e.g., MES_C_6050): ").strip()
-        long_price = to_decimal(input("Long call price (premium paid): ").strip())
+        while True:
+            mode = input("Choose mode (1 or 2): ").strip()
+            if mode in ["1", "2"]:
+                break
+            rich.print("[red]Please enter 1 or 2[/]")
         
-        if not all([short_symbol, short_price, long_symbol, long_price]):
-            rich.print("[red]Error: Missing required spread parameters[/]")
+        # Get strikes first (common to both modes)
+        rich.print("\n[bold]Strike Information:[/]")
+        short_strike = input("Short call strike (sell/lower): ").strip()
+        long_strike = input("Long call strike (buy/higher): ").strip()
+        
+        # Validate strikes
+        try:
+            short_strike_float = float(short_strike)
+            long_strike_float = float(long_strike)
+            if short_strike_float >= long_strike_float:
+                rich.print("[red]Error: Short strike must be lower than long strike for bear call[/]")
+                return None
+        except ValueError:
+            rich.print("[red]Error: Invalid strike format[/]")
             return None
         
+        if mode == "1":
+            # NET CREDIT MODE
+            rich.print(f"\n[bold]Net Credit Mode:[/]")
+            net_credit_input = input("Net credit received: ").strip()
+            net_credit = to_decimal(net_credit_input)
+            
+            if net_credit is None or net_credit <= 0:
+                rich.print("[red]Error: Invalid net credit[/]")
+                return None
+            
+            rich.print(f"\n[yellow]Auto-estimating individual leg prices for tracking...[/]")
+            estimated_short, estimated_long = self.auto_estimate_leg_prices(
+                long_strike, short_strike, net_credit  # Reverse for calls
+            )
+            
+            rich.print(f"[green]Estimated short call ({short_strike}): ${estimated_short}[/]")
+            rich.print(f"[green]Estimated long call ({long_strike}): ${estimated_long}[/]")
+            rich.print(f"[green]Net credit: ${net_credit} ✓[/]")
+            
+            # Confirm estimates
+            if not typer.confirm("\nDo these estimates look reasonable?", default=True):
+                rich.print("\n[yellow]Please provide better estimates:[/]")
+                long_price_input = input(f"Long call {long_strike} price: ").strip()
+                estimated_long = to_decimal(long_price_input)
+                estimated_short = net_credit + estimated_long
+                rich.print(f"[green]Recalculated short call price: ${estimated_short}[/]")
+            
+            short_price = estimated_short
+            long_price = estimated_long
+        
+        else:
+            # INDIVIDUAL LEG PRICES MODE
+            rich.print(f"\n[bold]Individual Leg Prices:[/]")
+            short_price_input = input(f"Short call {short_strike} price (premium received): ").strip()
+            long_price_input = input(f"Long call {long_strike} price (premium paid): ").strip()
+            
+            short_price = to_decimal(short_price_input)
+            long_price = to_decimal(long_price_input)
+            
+            if short_price is None or long_price is None:
+                rich.print("[red]Error: Invalid price format[/]")
+                return None
+            
+            # Calculate net credit for verification
+            net_credit = short_price - long_price
+            rich.print(f"[green]Calculated net credit: ${net_credit}[/]")
+            
+            if net_credit <= 0:
+                rich.print("[red]Warning: Net credit is not positive. Check your prices.[/]")
+                if not typer.confirm("Continue anyway?"):
+                    return None
+        
         # Get multiplier from config
-        symbol_base = short_symbol.split("_")[0]  # e.g., "MES" from "MES_C_6000"
-        multiplier = self.cfg.get("multipliers", {}).get(symbol_base, 1)
+        symbol_base = "MES"  # Default for MES options
+        multiplier = self.cfg.get("multipliers", {}).get("MES", 5)
         
         # Calculate costs for each leg
         short_costs = calculate_costs("OPTION", qty, self.cfg)
         long_costs = calculate_costs("OPTION", qty, self.cfg)
+        
+        # Build symbols
+        short_symbol = f"MES_C_{short_strike}"
+        long_symbol = f"MES_C_{long_strike}"
         
         # Create legs
         short_leg = Leg(
@@ -244,7 +341,7 @@ class TradeOperations:
         
         long_leg = Leg(
             symbol=long_symbol,
-            side="BUY",
+            side="BUY", 
             qty=qty,
             entry=long_price,
             exit=None,
@@ -258,17 +355,19 @@ class TradeOperations:
             id=trade_id,
             ts=trade_timestamp,
             typ="OPTION-SPREAD",
-            strat="BEAR-CALL",
+            strat=strat.upper(),
             status="OPEN",
             legs=[short_leg, long_leg],
             pnl=None,
             risk=None
         )
         
-        # Calculate net credit/debit
-        net_premium = (short_price - long_price) * qty * multiplier
+        # Calculate trade metrics - convert all to Decimal for consistency  
+        strike_diff = Decimal(str(long_strike_float - short_strike_float))  # For bear call: should be positive
+        total_premium = (short_price - long_price) * qty * multiplier
         total_costs = short_costs.total() + long_costs.total()
-        net_credit = net_premium - total_costs
+        net_credit_amount = total_premium - total_costs
+        max_risk = (strike_diff * qty * multiplier) - net_credit_amount
         
         # Save trade unless dry run
         if not dry_run:
@@ -276,42 +375,74 @@ class TradeOperations:
             save_book(self.book)
             write_single_trade_file(trade)
             
-            rich.print(f"[green]✓ Bear Call Spread opened: {trade_id}[/]")
-            rich.print(f"[green]  Short: {short_symbol} @ ${short_price} (SELL)[/]")
-            rich.print(f"[green]  Long:  {long_symbol} @ ${long_price} (BUY)[/]")
-            rich.print(f"[green]  Net Credit: ${net_credit:.2f} (after costs)[/]")
+            rich.print(f"\n[green]✓ Bear Call Spread opened: {trade_id}[/]")
+            rich.print(f"[green]  Short: SELL {qty} {short_symbol} @ ${short_price}[/]")
+            rich.print(f"[green]  Long:  BUY {qty} {long_symbol} @ ${long_price}[/]")
+            rich.print(f"[green]  Net Credit: ${net_credit_amount:.2f} (after costs)[/]")
+            rich.print(f"[green]  Max Risk: ${max_risk:.2f}[/]")
             rich.print(f"[green]  Total Costs: ${total_costs:.2f}[/]")
         else:
-            rich.print(f"[yellow]DRY RUN: Would create Bear Call Spread {trade_id}[/]")
-            rich.print(f"[yellow]  Net Credit: ${net_credit:.2f}[/]")
+            rich.print(f"\n[yellow]DRY RUN: Would create Bear Call Spread {trade_id}[/]")
+            rich.print(f"[yellow]  Net Credit: ${net_credit_amount:.2f}[/]")
         
         return trade
-
-    def delete_trade(self, trade_id):
-        """Delete a trade from the book"""
+    
+    # Keep existing methods for backward compatibility
+    def open_single_leg_trade(self, strat, typ, side, symbol, qty, price, dry_run=False, 
+                             custom_entry_time=None, custom_entry_date=None):
+        """Open a single-leg trade with optional custom date and time"""
         
-        # Find the trade
-        trade = None
-        trade_index = None
-        for i, t in enumerate(self.book):
-            if t.id == trade_id:
-                trade = t
-                trade_index = i
-                break
+        # Create timestamp
+        trade_timestamp = self._create_timestamp(custom_entry_time, custom_entry_date)
         
-        if not trade:
-            return False, "Trade not found"
+        # Generate trade ID
+        trade_id = self._generate_trade_id()
         
-        # Remove from book
-        del self.book[trade_index]
+        # Validate inputs
+        if not all([strat, typ, side, symbol, qty, price]):
+            rich.print("[red]Error: Missing required trade parameters[/]")
+            return None
         
-        # Save updated book
-        save_book(self.book)
+        # Convert price to decimal
+        entry_price = to_decimal(price)
+        if entry_price is None:
+            rich.print(f"[red]Error: Invalid price format: {price}[/]")
+            return None
         
-        return True, f"Trade {trade_id} deleted successfully"
-
-
-
+        # Get multiplier from config
+        symbol_base = symbol.split("_")[0]  # e.g., "MES" from "MES_C_6000"
+        multiplier = self.cfg.get("multipliers", {}).get(symbol_base, 1)
+        
+        # Calculate costs
+        entry_costs = calculate_costs(typ, qty, self.cfg)
+        
+        # Create trade
+        trade = Trade(
+            id=trade_id,
+            ts=trade_timestamp,
+            typ=typ.upper(),
+            strat=strat.upper(),
+            status="OPEN",
+            legs=[leg],
+            pnl=None,
+            risk=None
+        )
+        
+        # Save trade unless dry run
+        if not dry_run:
+            self.book.append(trade)
+            save_book(self.book)
+            write_single_trade_file(trade)
+            
+            rich.print(f"[green]✓ {typ} {side} trade opened: {trade_id}[/]")
+            rich.print(f"[green]  Symbol: {symbol} | Qty: {qty} | Price: ${entry_price}[/]")
+            rich.print(f"[green]  Costs: ${entry_costs.total():.2f}[/]")
+        else:
+            rich.print(f"[yellow]DRY RUN: Would create {typ} {side} trade {trade_id}[/]")
+            rich.print(f"[yellow]  Symbol: {symbol} | Qty: {qty} | Price: ${entry_price}[/]")
+        
+        return trade
+    
     def close_trade_partial(self, trade_id, partial_qty=None):
         """Close a trade completely or partially"""
         
@@ -342,34 +473,72 @@ class TradeOperations:
             rich.print(f"[yellow]Would close {partial_qty} of {open_qty} contracts[/]")
             return False
         
-        # Full close - get exit prices for each leg
-        rich.print(f"[cyan]Closing trade {trade_id}[/]")
+        # Full close - check if it's a spread
+        if len(trade.legs) > 1:
+            return self._close_spread(trade)
+        else:
+            return self._close_single_leg(trade)
+    
+    def _close_spread(self, trade):
+        """Close a multi-leg spread trade"""
+        rich.print(f"[cyan]Closing {trade.strat} spread {trade.id}[/]")
         rich.print(f"Strategy: {trade.strat} | Type: {trade.typ}")
+        
+        # Offer different closing methods
+        rich.print("\n[bold]Closing Options:[/]")
+        rich.print("1. Net debit (what broker shows)")
+        rich.print("2. Individual leg prices")
+        
+        while True:
+            choice = input("Choose method (1 or 2): ").strip()
+            if choice in ["1", "2"]:
+                break
+            rich.print("[red]Please enter 1 or 2[/]")
         
         exit_timestamp = dt.datetime.now(dt.timezone.utc)
         
-        for i, leg in enumerate(trade.legs):
-            if leg.exit is not None:
-                rich.print(f"[dim]Leg {i+1} already closed: {leg.symbol}[/]")
-                continue
+        if choice == "1":
+            # Net debit method
+            net_debit_input = input("Net debit to close spread: ").strip()
+            net_debit = to_decimal(net_debit_input)
             
-            rich.print(f"\n[bold]Leg {i+1}: {leg.side} {leg.qty} {leg.symbol}[/]")
-            rich.print(f"Entry: ${leg.entry}")
+            if net_debit is None:
+                rich.print("[red]Invalid net debit format[/]")
+                return False
             
-            # Get exit price
-            exit_price = input(f"Exit price for {leg.symbol}: ").strip()
-            leg.exit = to_decimal(exit_price)
+            # Estimate individual leg prices from net debit
+            self._estimate_exit_prices_from_net_debit(trade, net_debit)
             
-            # Calculate exit costs
-            trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
-            leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
-            
-            rich.print(f"[green]✓ Leg closed at ${leg.exit}[/]")
+        else:
+            # Individual leg prices method
+            for i, leg in enumerate(trade.legs):
+                if leg.exit is not None:
+                    rich.print(f"[dim]Leg {i+1} already closed: {leg.symbol}[/]")
+                    continue
+                
+                rich.print(f"\n[bold]Leg {i+1}: {leg.side} {leg.qty} {leg.symbol}[/]")
+                rich.print(f"Entry: ${leg.entry}")
+                
+                # Get exit price
+                exit_price_input = input(f"Exit price for {leg.symbol}: ").strip()
+                exit_price = to_decimal(exit_price_input)
+                
+                if exit_price is None:
+                    rich.print(f"[red]Invalid price format for {leg.symbol}[/]")
+                    return False
+                
+                leg.exit = exit_price
+                
+                # Calculate exit costs
+                trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+                leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                
+                rich.print(f"[green]✓ Leg {leg.symbol} closed at ${leg.exit}[/]")
         
         # Mark trade as closed
         trade.status = "CLOSED"
         
-        # Calculate PnL
+        # Calculate P&L
         gross_pnl = trade.gross_pnl()
         net_pnl = trade.net_pnl()
         total_costs = trade.total_costs()
@@ -379,12 +548,109 @@ class TradeOperations:
         save_book(self.book)
         write_single_trade_file(trade)
         
-        rich.print(f"\n[green]✓ Trade {trade_id} closed successfully[/]")
+        rich.print(f"\n[green]✓ Spread {trade.id} closed successfully[/]")
         rich.print(f"[green]  Gross P&L: ${gross_pnl:.2f}[/]")
         rich.print(f"[green]  Total Costs: ${total_costs:.2f}[/]")
         rich.print(f"[green]  Net P&L: ${net_pnl:.2f}[/]")
         
         return True
+    
+    def _close_single_leg(self, trade):
+        """Close a single-leg trade"""
+        leg = trade.legs[0]
+        
+        rich.print(f"[cyan]Closing {trade.strat} trade {trade.id}[/]")
+        rich.print(f"Position: {leg.side} {leg.qty} {leg.symbol}")
+        rich.print(f"Entry: ${leg.entry}")
+        
+        # Get exit price
+        exit_price_input = input(f"Exit price for {leg.symbol}: ").strip()
+        exit_price = to_decimal(exit_price_input)
+        
+        if exit_price is None:
+            rich.print("[red]Invalid exit price format[/]")
+            return False
+        
+        leg.exit = exit_price
+        
+        # Calculate exit costs
+        trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+        leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+        
+        # Mark trade as closed
+        trade.status = "CLOSED"
+        
+        # Calculate P&L
+        gross_pnl = trade.gross_pnl()
+        net_pnl = trade.net_pnl()
+        total_costs = trade.total_costs()
+        trade.pnl = net_pnl
+        
+        # Save the updated trade
+        save_book(self.book)
+        write_single_trade_file(trade)
+        
+        rich.print(f"\n[green]✓ Trade {trade.id} closed successfully[/]")
+        rich.print(f"[green]  Gross P&L: ${gross_pnl:.2f}[/]")
+        rich.print(f"[green]  Total Costs: ${total_costs:.2f}[/]")
+        rich.print(f"[green]  Net P&L: ${net_pnl:.2f}[/]")
+        
+        return True
+    
+    def _estimate_exit_prices_from_net_debit(self, trade, net_debit):
+        """Estimate individual leg exit prices from net debit"""
+        rich.print(f"[yellow]Estimating individual leg prices from net debit of ${net_debit}[/]")
+        
+        if len(trade.legs) == 2:
+            # For two-leg spreads, estimate based on leg types
+            for leg in trade.legs:
+                if leg.side == "SELL":
+                    # Short leg gets most of the debit (you're buying it back)
+                    estimated_exit = leg.entry + (net_debit * Decimal("0.7"))
+                else:
+                    # Long leg gets smaller portion (you're selling it)
+                    estimated_exit = leg.entry - (net_debit * Decimal("0.3"))
+                
+                leg.exit = estimated_exit
+                
+                # Calculate exit costs
+                trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+                leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                
+                rich.print(f"[yellow]  Estimated {leg.symbol} exit: ${estimated_exit:.2f}[/]")
+        else:
+            # For complex spreads, distribute evenly
+            for leg in trade.legs:
+                estimated_exit = leg.entry + (net_debit / len(trade.legs))
+                leg.exit = estimated_exit
+                
+                trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+                leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                
+                rich.print(f"[yellow]  Estimated {leg.symbol} exit: ${estimated_exit:.2f}[/]")
+    
+    def delete_trade(self, trade_id):
+        """Delete a trade from the book"""
+        
+        # Find the trade
+        trade = None
+        trade_index = None
+        for i, t in enumerate(self.book):
+            if t.id == trade_id:
+                trade = t
+                trade_index = i
+                break
+        
+        if not trade:
+            return False, "Trade not found"
+        
+        # Remove from book
+        del self.book[trade_index]
+        
+        # Save updated book
+        save_book(self.book)
+        
+        return True, f"Trade {trade_id} deleted successfully"
     
     def get_open_trades(self):
         """Get all open trades"""
@@ -417,32 +683,3 @@ class TradeOperations:
             "winning_trades": winning_trades,
             "win_rate": (winning_trades / len(closed_trades) * 100) if closed_trades else 0
         }
-
-
-# ═══════════════════════════════════════════════════════════════════
-# Usage Examples and Testing
-# ═══════════════════════════════════════════════════════════════════
-
-"""
-This complete trade_operations.py includes:
-
-1. Historical timestamp support (custom_entry_time, custom_entry_date)
-2. Interactive spread entry (prompts for strikes and prices)
-3. Proper cost calculation and PnL tracking
-4. Trade ID generation
-5. Full close functionality with exit price entry
-6. Helper methods for trade management
-
-Key features:
-- ✅ Historical trade entry with custom timestamps
-- ✅ Single leg trades (futures/options)
-- ✅ Bull put spreads with interactive entry
-- ✅ Bear call spreads with interactive entry
-- ✅ Full trade closing with P&L calculation
-- ✅ Proper cost tracking and validation
-- ✅ Dry run support for testing
-- ✅ Rich formatting for clear output
-
-The methods will work with your existing commands and provide clear
-feedback for each operation.
-"""

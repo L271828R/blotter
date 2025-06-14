@@ -1,0 +1,9 @@
+[
+  {
+    "amount": 3802.7799999999997,
+    "reason": "Broker statement reconciliation",
+    "date": "2025-06-14T10:24:20.365986+00:00",
+    "id": "10f71225",
+    "type": "manual_adjustment"
+  }
+]

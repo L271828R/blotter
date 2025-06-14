@@ -1,65 +1,31 @@
-option_blocks:
-  - start: "09:30"
-    end: "09:45" 
-    name: "Market Open"
-  - start: "12:00"
-    end: "16:00"
-    name: "Lunch Block"  
-  - start: "18:00"
-    end: "21:15"
-    name: "Asian Open"
-multipliers:
-  /MES: 5
-  MES: 5
-  MES_OPT: 5
-strategies:
-  - 5AM-LONG-SLUG
-  - 5AM-OTHER
-  - NORMAL
-  - BULL-PUT
-  - BEAR-CALL
-  - BULL-PUT-OVERNIGHT
-  - BULL-PUT-1:30-3:00
-
-exemption:
-  - BULL-PUT-1:30-3:00
-
-
 costs:
-  FUTURE:
-    commission_per_contract: "1.10"
-    exchange_fees_per_contract: "0.37"
-    regulatory_fees_per_contract: "0.00"
-  OPTION:
-    commission_per_contract: "1.25"
-    exchange_fees_per_contract: "0.50"
-    regulatory_fees_per_contract: "0.02"
-
-
-# Trading System Configuration
-# Customize all prompts and settings here
-# Configurable Prompts - Customize these to match your trading style
-
-prompt_triggers:
-  on_entry: true   # Show prompts when opening trades (buying)
-  on_exit: false  
-
-prompts:
-  # Core Market Analysis Prompts
-  #  if ends in ? it is a Y/N
-  1_Stop-watch: "Are you going to sell it in 1 hour if no profit?"
-  2_small_amount: "Is the potential loss acceptable?"
-  3_One_Shot: "Are you only doing one purchase? Buying more will anchor you"
-  4_45_degree_angles: "Any 45% angles? price, yellow? Have they been digested by 9EMA"
-  5_Red_50_SMVA: "Is the red-50 above below? With you against you:"
-  6_VWAP: "Was it abused recently? Is that good or bad:"
-  7_economic_events I: "Any major economic events today? (Fed, CPI, NFP, etc.)?"
-  8_economic_events II: "Any 8:30AM (savior) economic events? This might anchor you, make you wait more than needed:"
-  9_auction: "Treasury auction (1PM) schedule affecting rates today?"
-  10_earnings: "Major earnings releases this week that could impact market?"
-  11_fed_speakers: "Fed speakers scheduled today? (Check Fed calendar)?"
-  12_market_conditions: "Current market conditions/sentiment? (Bullish/Bearish/Neutral)"
-  13_volatility: "VIX level and volatility environment? (High/Normal/Low)"
-  14_invent_a_note_of_trade_going_wrong: "Write a note pretending trade went wrong:"
-  15_real_note: "Write a note:"
-  
+  FUTURE: {commission_per_contract: '1.10', exchange_fees_per_contract: '0.37', regulatory_fees_per_contract: '0.00'}
+  OPTION: {commission_per_contract: '1.25', exchange_fees_per_contract: '0.50', regulatory_fees_per_contract: '0.02'}
+exemption: ['BULL-PUT-1:30-3:00']
+multipliers: {/MES: 5, MES: 5, MES_OPT: 5}
+option_blocks:
+- {end: '09:45', name: Market Open, start: '09:30'}
+- {end: '16:00', name: Lunch Block, start: '12:00'}
+- {end: '21:15', name: Asian Open, start: '18:00'}
+prompt_triggers: {on_entry: true, on_exit: false}
+prompts: {10_earnings: 'Major earnings releases this week that could impact market?',
+  11_fed_speakers: 'Fed speakers scheduled today? (Check Fed calendar)?', 12_market_conditions: 'Current
+    market conditions/sentiment? (Bullish/Bearish/Neutral)', 13_volatility: 'VIX level
+    and volatility environment? (High/Normal/Low)', 14_invent_a_note_of_trade_going_wrong: 'Write
+    a note pretending trade went wrong:', 15_real_note: 'Write a note:', 1_Stop-watch: 'Are
+    you going to sell it in 1 hour if no profit?', 2_small_amount: 'Is the potential
+    loss acceptable?', 3_One_Shot: 'Are you only doing one purchase? Buying more will
+    anchor you', 4_45_degree_angles: 'Any 45% angles? price, yellow? Have they been
+    digested by 9EMA', 5_Red_50_SMVA: 'Is the red-50 above below? With you against
+    you:', 6_VWAP: 'Was it abused recently? Is that good or bad:', 7_economic_events I: 'Any
+    major economic events today? (Fed, CPI, NFP, etc.)?', 8_economic_events II: 'Any
+    8:30AM (savior) economic events? This might anchor you, make you wait more than
+    needed:', 9_auction: 'Treasury auction (1PM) schedule affecting rates today?'}
+strategies:
+  5AM-LONG-SLUG: {default_side: BUY, default_type: OPTION, type: bull_put_spread}
+  5AM-OTHER: {default_side: BUY, default_type: OPTION, type: bull_put_spread}
+  BEAR-CALL: {type: bear_call_spread}
+  BULL-PUT: {type: bull_put_spread}
+  BULL-PUT-1:30-3:00: {type: bull_put_spread}
+  BULL-PUT-OVERNIGHT: {type: bull_put_spread}
+  NORMAL: {type: single_leg}

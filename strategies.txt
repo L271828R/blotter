@@ -1,11 +1,16 @@
-# Trading Strategies Configuration
-# One strategy per line
-# Lines starting with # are comments
+# Trading Strategies (Auto-generated from config.yaml)
+# DO NOT EDIT - This file is regenerated on startup
+# To add strategies, edit config.yaml
+
+# Single Leg Strategies
+NORMAL
+
+# Bull Put Spreads
 5AM-LONG-SLUG
 5AM-OTHER
-NORMAL
 BULL-PUT
-BEAR-CALL
-BULL-PUT-OVERNIGHT
 BULL-PUT-1:30-3:00
+BULL-PUT-OVERNIGHT
 
+# Bear Call Spreads
+BEAR-CALL
