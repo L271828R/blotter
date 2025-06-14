@@ -1,7 +1,6 @@
 # ═══════════════════════════════════════════════════════════════════
 # ls.py - List trades functionality
 # ═══════════════════════════════════════════════════════════════════
-
 import datetime as dt
 from rich.table import Table
 import rich
@@ -18,12 +17,19 @@ def list_trades(book):
                         ("legs", None), ("qty", "right"), ("status", None), ("PnL", "right")]:
         tbl.add_column(col, justify=justify)
     
-    tz = dt.datetime.now().astimezone().tzinfo
+    tz = dt.timezone(dt.timedelta(hours=-5))  # EST (UTC-5)
     for t in book:
-        ts = dt.datetime.fromisoformat(t.ts).astimezone(tz).strftime("%Y-%m-%d %H:%M:%S")
+        # Parse timestamp and convert to EST, then format as 12-hour time
+        ts_dt = dt.datetime.fromisoformat(t.ts).astimezone(tz)
+        ts = ts_dt.strftime("%Y-%m-%d %I:%M %p")  # 12-hour format with AM/PM
         legs = "; ".join(f"{l.side[0]} {l.symbol.split('_')[-1]}" for l in t.legs)
         
-        current_qty = sum(l.qty for l in t.legs)
+        # For spreads, show quantity per spread, not total contracts
+        if t.typ == "OPTION-SPREAD":
+            current_qty = t.legs[0].qty  # Quantity of spreads
+        else:
+            current_qty = sum(l.qty for l in t.legs)  # Total contracts for single legs
+        
         if "-P" in t.id:
             qty_display = str(current_qty)
         else:
