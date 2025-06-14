@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════
-# Updated commands/trade_commands.py - Historical trade entry
+# Updated commands/trade_commands.py - Historical trade entry with FZF strategy selection
 # ═══════════════════════════════════════════════════════════════════
 
 import typer
@@ -12,6 +12,11 @@ from utils import blocked_for_options, to_decimal, check_time_against_blocks
 from persistence import save_book
 from ls import list_trades
 from recalc import recalc_trade_pnl
+
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from fzf_helper import select_strategy, check_fzf_installed
 
 trade_app = typer.Typer()
 
@@ -43,17 +48,35 @@ def open_trade(
         rich.print("[bold cyan]📅 HISTORICAL MODE - Enter trade with custom timestamp[/]")
         rich.print()
 
-    # Enforce configured strategies
-    allowed = {s.upper() for s in cfg.get("strategies", [])}
-    while True:
+    # Strategy selection with FZF or fallback
+    if not strat:
+        # Try FZF first, then fallback to traditional prompt
+        strat = select_strategy(book, config_path="strategies.txt", allow_custom=True)
+        
         if not strat:
-            strat = typer.prompt(f"Strategy ({', '.join(sorted(allowed))})")
+            # Fallback to traditional prompt with config strategies
+            allowed = {s.upper() for s in cfg.get("strategies", [])}
+            while True:
+                strat = typer.prompt(f"Strategy ({', '.join(sorted(allowed))})")
+                u = strat.upper()
+                if u in allowed:
+                    break
+                rich.print(f"[red]Unknown strategy: {strat!r}[/]")
+                rich.print(f"[green]Valid strategies are:[/] {', '.join(sorted(allowed))}")
+                strat = None  # force re-prompt
+    
+    # Validate strategy against config (if strat was provided via command line)
+    if strat:
+        allowed = {s.upper() for s in cfg.get("strategies", [])}
         u = strat.upper()
-        if u in allowed:
-            break
-        rich.print(f"[red]Unknown strategy: {strat!r}[/]")
-        rich.print(f"[green]Valid strategies are:[/] {', '.join(sorted(allowed))}")
-        strat = None  # force re-prompt
+        if u not in allowed:
+            rich.print(f"[red]Unknown strategy: {strat!r}[/]")
+            rich.print(f"[green]Valid strategies are:[/] {', '.join(sorted(allowed))}")
+            # Try FZF selection again
+            strat = select_strategy(book, config_path="strategies.txt", allow_custom=True)
+            if not strat:
+                return
+            u = strat.upper()
 
     # Handle historical trade entry
     custom_entry_time = None
@@ -172,7 +195,6 @@ def open_trade(
     elif historical and trade and trade.typ.startswith("OPTION"):
         rich.print("[dim]Note: No stopwatch started for historical trades[/]")
 
-# Rest of the commands remain the same...
 @trade_app.command("close")
 def close_trade(
     trade_id: str,
@@ -306,5 +328,3 @@ def delete_trade(
     save_book(book)
     
     rich.print(f"[green]✓ Trade {trade_id} deleted successfully[/]")
-
-

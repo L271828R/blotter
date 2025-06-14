@@ -1,0 +1,11 @@
+# Trading Strategies Configuration
+# One strategy per line
+# Lines starting with # are comments
+5AM-LONG-SLUG
+5AM-OTHER
+NORMAL
+BULL-PUT
+BEAR-CALL
+BULL-PUT-OVERNIGHT
+BULL-PUT-1:30-3:00
+
