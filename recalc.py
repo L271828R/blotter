@@ -8,7 +8,7 @@ import typer
 import decimal as dec
 
 from utils import calc_trade_pnl, to_decimal
-from persistence import save_book, write_single_trade_file
+from core.persistence import save_book, write_single_trade_file
 
 def safe_to_decimal(value):
     """Safely convert any value to Decimal, handling strings and existing Decimals"""

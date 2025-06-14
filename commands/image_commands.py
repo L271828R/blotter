@@ -10,7 +10,7 @@ import os
 from rich.table import Table
 
 from commands import image_manager, book
-from persistence import save_book
+from core.persistence import save_book
 
 image_app = typer.Typer()
 

@@ -7,7 +7,7 @@ import rich
 import datetime as dt
 
 from commands import cfg, book
-from persistence import save_book
+from core.persistence import save_book
 from utils import blocked_for_options, calculate_costs
 from recalc import recalc_trade_pnl, recalc_all_trades, fix_data_types
 from audit import audit_trade, audit_all_positions

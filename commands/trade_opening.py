@@ -8,7 +8,9 @@ import sys
 import os
 
 from commands import cfg, book, trade_ops, stopwatch_manager
-from config import get_strategy_type
+
+from core.config import get_strategy_type
+
 from .trade_utils import (
     get_historical_timestamp, 
     is_option_strategy, 

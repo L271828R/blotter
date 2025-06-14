@@ -29,7 +29,7 @@ def fix_trade_prices(trade_id: str):
     
     from utils import to_decimal
     from recalc import recalc_trade_pnl
-    from persistence import save_book
+    from core.persistence import save_book
     import datetime as dt
     
     rich.print(f"[cyan]Fixing trade {trade_id}[/]")

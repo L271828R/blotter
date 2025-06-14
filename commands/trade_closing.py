@@ -8,9 +8,9 @@ from decimal import Decimal
 
 from commands import cfg, book, trade_ops
 from utils import to_decimal, calculate_costs
-from models import CommissionFees
-from persistence import save_book
-from config import is_spread_strategy
+from core.models import CommissionFees
+from core.persistence import save_book
+from core.config import is_spread_strategy
 from .trade_utils import calculate_leg_pnl
 
 def find_trade(trade_id):

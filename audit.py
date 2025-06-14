@@ -149,7 +149,7 @@ import datetime as dt
 import decimal as dec
 from typing import Tuple
 
-from models import CommissionFees
+from core.models import CommissionFees
 
 def to_decimal(v: str | dec.Decimal | None) -> dec.Decimal | None:
     """Convert value to Decimal, handling None and existing Decimals"""
@@ -225,9 +225,9 @@ import datetime as dt
 from dataclasses import asdict
 from typing import List
 
-from models import Trade, Leg, Risk, CommissionFees
+from core.models import Trade, Leg, Risk, CommissionFees
 from utils import to_decimal
-from config import load_config
+from core.config import load_config
 
 BOOK = pathlib.Path("trades.json")
 INBOX = pathlib.Path("inbox")
@@ -437,7 +437,7 @@ import typer
 import decimal as dec
 
 from utils import calc_trade_pnl, to_decimal
-from persistence import save_book, write_single_trade_file
+from core.persistence import save_book, write_single_trade_file
 
 def safe_to_decimal(value):
     """Safely convert any value to Decimal, handling strings and existing Decimals"""

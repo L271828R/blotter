@@ -1,24 +1,31 @@
 # ═══════════════════════════════════════════════════════════════════
 # blotter.py - Main application with backward compatibility and historical support
 # ═══════════════════════════════════════════════════════════════════
-
-from __future__ import annotations
+from __future__ import annotations  # Fix: double underscore, not **
 import typer
 
-from config import load_config
-from persistence import load_book, save_book, import_inbox_files
-from models import CommissionFees
+# Updated imports from core
+from core.config import load_config
+from core.persistence import load_book, save_book, import_inbox_files
+from core.models import CommissionFees
 from utils import to_decimal
 
-# Import command modules
+# Import command modules (these stay the same)
 from commands.trade_commands import trade_app
 from commands.management_commands import mgmt_app
 from commands.timer_commands import timer_app
 from commands.image_commands import image_app
 from commands.risk_commands import risk_app
-
-from commands.trade_commands import open_trade, close_trade, fix_trade_prices, ls_command, record_2h_pnl, expire_spread
-
+from commands.trade_commands import (
+    open_trade, 
+    close_trade, 
+    fix_trade_prices, 
+    ls_command, 
+    record_2h_pnl, 
+    expire_spread,
+    delete_trade  # You can combine this with the other imports above
+)
+# Rest of your blotter.py code stays the same...
 
 # Create main app and add sub-apps
 app = typer.Typer()
@@ -34,7 +41,6 @@ book = load_book()
 
 
 
-from commands.trade_commands import delete_trade
 
 # Add these aliases to the backward compatibility section:
 

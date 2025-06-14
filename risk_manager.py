@@ -123,11 +123,11 @@ def list_balance_adjustments(days=30):
 def get_current_balance(book=None, cfg=None):
     """Calculate current account balance from starting balance + blotter P&L + adjustments"""
     if cfg is None:
-        from config import load_config
+        from core.config import load_config
         cfg = load_config()
     
     if book is None:
-        from persistence import load_book
+        from core.persistence import load_book
         book = load_book()
     
     starting_balance = cfg.get("risk_limits", {}).get("starting_balance", 10000)

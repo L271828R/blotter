@@ -3,7 +3,7 @@
 # ═══════════════════════════════════════════════════════════════════
 
 import typer
-from config import add_strategy, list_strategies
+from core.config import add_strategy, list_strategies
 from commands import cfg
 
 def add_strategy_command(
@@ -22,7 +22,7 @@ def fix_strategy_command(
     """Fix strategy type after migration"""
     # Since fix_strategy_type doesn't exist, we'll implement it here
     import rich
-    from config import load_config, save_config
+    from core.config import load_config, save_config
     
     cfg = load_config()
     

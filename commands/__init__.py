@@ -20,7 +20,7 @@ def set_globals(config, trade_book):
     book = trade_book
     
     # Initialize managers
-    from trade_operations import TradeOperations
+    from core.trade_operations import TradeOperations
     from stopwatch import stopwatch_manager as sw_mgr, RiskManager
     from images import image_manager as img_mgr
     
