@@ -17,6 +17,9 @@ from commands.timer_commands import timer_app
 from commands.image_commands import image_app
 from commands.risk_commands import risk_app
 
+from commands.trade_commands import open_trade, close_trade, fix_trade_prices, ls_command, record_2h_pnl, expire_spread
+
+
 # Create main app and add sub-apps
 app = typer.Typer()
 app.add_typer(trade_app, name="trade", help="Trade operations")
@@ -243,6 +246,13 @@ def risk_alias(
 ):
     """Check risk (alias for 'risk check')"""
     return risk_check(trade_value)
+
+
+@app.command("expire-spread")
+def expire_spread_alias(trade_id: str):
+    """Expire entire spread (alias for 'trade expire-spread')"""
+    return expire_spread(trade_id)
+
 
 if __name__ == "__main__":
     app()

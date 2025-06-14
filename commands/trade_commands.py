@@ -14,6 +14,8 @@ from persistence import save_book
 from ls import list_trades
 from recalc import recalc_trade_pnl
 from config import get_strategy_type, is_bull_put_spread, is_bear_call_spread, is_spread_strategy
+from models import CommissionFees
+
 
 import sys
 import os
@@ -320,6 +322,77 @@ def close_single_leg(
             return
     
     rich.print(f"[red]Leg {leg_symbol} not found in trade {trade_id}[/]")
+
+@trade_app.command("expire-spread")
+def expire_spread(
+    trade_id: str
+):
+    """Mark entire spread as expired (automatically sets all legs' exit prices to 0)"""
+    
+    trade = find_trade(trade_id)
+    if not trade:
+        rich.print(f"[red]Trade {trade_id} not found[/]")
+        return
+    
+    # Check if it's actually a spread
+    if len(trade.legs) < 2:
+        rich.print(f"[red]Trade {trade_id} is not a spread (only {len(trade.legs)} leg)[/]")
+        rich.print("[yellow]Use 'expire-leg' for single-leg trades[/]")
+        return
+    
+    # Check if any legs are already closed
+    open_legs = [leg for leg in trade.legs if leg.exit is None]
+    if not open_legs:
+        rich.print(f"[red]All legs in spread {trade_id} are already closed[/]")
+        return
+    
+    rich.print(f"[cyan]Expiring {trade.strat} spread: {trade_id}[/]")
+    rich.print(f"[yellow]This will set exit price to $0.00 for all {len(open_legs)} open legs[/]")
+    
+    # Confirm the action
+    if not typer.confirm("Are you sure you want to expire the entire spread?"):
+        rich.print("[yellow]Expiration cancelled[/]")
+        return
+    
+    expired_legs = []
+    total_leg_pnl = 0
+    
+    # Expire all open legs
+    for leg in trade.legs:
+        if leg.exit is None:
+            # Mark as expired
+            leg.exit = to_decimal("0.00")
+            
+            # For spread expirations, TOS typically shows $0 fees
+            # So we don't add exit costs for expirations
+            leg.exit_costs = CommissionFees(
+                commission=Decimal('0'),
+                exchange_fees=Decimal('0'), 
+                regulatory_fees=Decimal('0')
+            )
+            
+            # Calculate leg P&L
+            leg_pnl = calculate_leg_pnl(leg)
+            total_leg_pnl += leg_pnl
+            expired_legs.append((leg.symbol, leg_pnl))
+            
+            rich.print(f"[green]✓ Expired {leg.symbol} (was {leg.side} @ ${leg.entry}) → P&L: ${leg_pnl:+.2f}[/]")
+    
+    # Mark trade as closed
+    trade.status = "CLOSED"
+    trade.pnl = trade.net_pnl()
+    
+    save_book(book)
+    
+    # Show summary
+    rich.print(f"\n[green]✓ Spread {trade_id} expired successfully[/]")
+    rich.print(f"[green]  Expired {len(expired_legs)} legs[/]")
+    rich.print(f"[green]  Total P&L: ${trade.pnl:+.2f}[/]")
+    
+    # Show breakdown by leg
+    rich.print(f"\n[dim]Leg breakdown:[/]")
+    for symbol, pnl in expired_legs:
+        rich.print(f"[dim]  {symbol}: ${pnl:+.2f}[/]")
 
 @trade_app.command("expire-leg")
 def expire_leg(
