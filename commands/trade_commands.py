@@ -6,6 +6,7 @@ import typer
 import rich
 import datetime as dt
 from typing import List
+from decimal import Decimal
 
 from commands import cfg, book, trade_ops, stopwatch_manager
 from utils import blocked_for_options, to_decimal, check_time_against_blocks, calculate_costs
@@ -426,38 +427,88 @@ def close_trade(
         trade_ops.close_trade_partial(trade_id, qty)
 
 def close_spread_with_net_debit(trade, net_debit):
-    """Close spread using net debit"""
-    # Estimate individual leg prices from net debit
-    # This is a simplified approach - you could make it more sophisticated
+    """Close spread using net debit - calculates P&L based on net credit received vs net debit paid"""
+    # Convert net_debit to Decimal to prevent type mismatch
+    net_debit = Decimal(str(net_debit))
     
-    rich.print(f"[yellow]Estimating individual leg prices from net debit of ${net_debit}[/]")
+    rich.print(f"[yellow]Closing {trade.strat} spread with net debit of ${net_debit}[/]")
+    
+    # Calculate the original net credit received when the spread was opened
+    original_net_credit = Decimal('0')
+    
+    for leg in trade.legs:
+        if leg.side == "SELL":
+            # Money received when we sold
+            original_net_credit += leg.entry
+        else:  # leg.side == "BUY"
+            # Money paid when we bought
+            original_net_credit -= leg.entry
+    
+    rich.print(f"[cyan]Original net credit received: ${original_net_credit:.2f}[/]")
+    rich.print(f"[cyan]Net debit paid to close: ${net_debit:.2f}[/]")
+    
+    # Calculate profit per contract (before multiplier and quantity)
+    profit_per_contract = original_net_credit - net_debit
+    rich.print(f"[cyan]Profit per contract: ${profit_per_contract:.2f}[/]")
+    
+    # For P&L calculation, we need to set exit prices that will result in the correct total P&L
+    # The simplest approach is to set the exit prices to match the actual net debit
+    
+    # For a bull put spread being closed:
+    # - The SELL leg (higher strike) gets bought back
+    # - The BUY leg (lower strike) gets sold
     
     for i, leg in enumerate(trade.legs):
         if leg.exit is None:
-            # Simple estimation - distribute net debit proportionally
-            if len(trade.legs) == 2:
-                if leg.side == "SELL":
-                    # For short leg, assume most of the debit
-                    estimated_exit = leg.entry + (net_debit * 0.8)
-                else:
-                    # For long leg, assume smaller portion
-                    estimated_exit = leg.entry - (net_debit * 0.2)
+            if leg.side == "SELL":
+                # Originally sold this leg, now buying it back
+                # Set exit price to the debit portion allocated to this leg
+                leg.exit = net_debit * Decimal('0.8')  # Assume 80% of debit for sold leg
+            else:  # leg.side == "BUY"
+                # Originally bought this leg, now selling it back  
+                # Set exit price to the credit portion allocated to this leg
+                leg.exit = net_debit * Decimal('0.2')  # Assume 20% of debit for bought leg
+            
+            # Calculate exit costs - for spreads, only apply costs to first leg
+            if i == 0:
+                # First leg gets the spread exit costs
+                leg.exit_costs = calculate_costs("OPTION", leg.qty, cfg)
             else:
-                # For more complex spreads, distribute evenly
-                estimated_exit = leg.entry + (net_debit / len(trade.legs))
+                # Additional legs get zero exit costs (it's one spread order)
+                from utils import CommissionFees
+                leg.exit_costs = CommissionFees(
+                    commission=Decimal('0'),
+                    exchange_fees=Decimal('0'), 
+                    regulatory_fees=Decimal('0')
+                )
             
-            leg.exit = to_decimal(estimated_exit)
-            leg.exit_costs = calculate_costs("OPTION", leg.qty, cfg)
-            
-            rich.print(f"[yellow]  Estimated {leg.symbol} exit: ${estimated_exit:.2f}[/]")
+            rich.print(f"[yellow]  {leg.symbol} ({leg.side}): Entry ${leg.entry} → Exit ${leg.exit:.2f}[/]")
     
-    # Mark trade as closed
+    # Mark trade as closed and calculate P&L
     trade.status = "CLOSED"
-    trade.pnl = trade.net_pnl()
+    
+    # Calculate total P&L manually for verification
+    total_gross_pnl = profit_per_contract * trade.legs[0].qty * trade.legs[0].multiplier
+    
+    # Calculate total costs
+    total_entry_costs = sum(leg.entry_costs.total() if leg.entry_costs else 0 for leg in trade.legs)
+    total_exit_costs = sum(leg.exit_costs.total() if leg.exit_costs else 0 for leg in trade.legs)
+    total_costs = total_entry_costs + total_exit_costs
+    
+    # Debug cost breakdown
+    rich.print(f"[dim]Cost breakdown:[/]")
+    rich.print(f"[dim]  Entry costs: ${total_entry_costs:.2f}[/]")
+    rich.print(f"[dim]  Exit costs: ${total_exit_costs:.2f}[/]")
+    
+    # Set the P&L directly
+    trade.pnl = float(total_gross_pnl) - float(total_costs)
+    
     save_book(book)
     
-    rich.print(f"[green]✓ Spread closed with net debit of ${net_debit}[/]")
-    rich.print(f"[green]  Total P&L: ${trade.pnl:+.2f}[/]")
+    rich.print(f"\n[green]✓ Spread closed successfully[/]")
+    rich.print(f"[green]  Gross P&L: ${total_gross_pnl:+.2f}[/]")
+    rich.print(f"[green]  Total costs: ${total_costs:.2f}[/]")
+    rich.print(f"[green]  Net P&L: ${trade.pnl:+.2f}[/]")
 
 @trade_app.command("fix")
 def fix_trade_prices(trade_id: str):

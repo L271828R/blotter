@@ -1,31 +1,99 @@
-costs:
-  FUTURE: {commission_per_contract: '1.10', exchange_fees_per_contract: '0.37', regulatory_fees_per_contract: '0.00'}
-  OPTION: {commission_per_contract: '1.25', exchange_fees_per_contract: '0.50', regulatory_fees_per_contract: '0.02'}
-exemption: ['BULL-PUT-1:30-3:00']
-multipliers: {/MES: 5, MES: 5, MES_OPT: 5}
+# ═══════════════════════════════════════════════════════════════════
+# Trading Configuration - Updated with correct ThinkOrSwim commission rates
+# ═══════════════════════════════════════════════════════════════════
+
+# Market timing restrictions for option trading
 option_blocks:
-- {end: '09:45', name: Market Open, start: '09:30'}
-- {end: '16:00', name: Lunch Block, start: '12:00'}
-- {end: '21:15', name: Asian Open, start: '18:00'}
-prompt_triggers: {on_entry: true, on_exit: false}
-prompts: {10_earnings: 'Major earnings releases this week that could impact market?',
-  11_fed_speakers: 'Fed speakers scheduled today? (Check Fed calendar)?', 12_market_conditions: 'Current
-    market conditions/sentiment? (Bullish/Bearish/Neutral)', 13_volatility: 'VIX level
-    and volatility environment? (High/Normal/Low)', 14_invent_a_note_of_trade_going_wrong: 'Write
-    a note pretending trade went wrong:', 15_real_note: 'Write a note:', 1_Stop-watch: 'Are
-    you going to sell it in 1 hour if no profit?', 2_small_amount: 'Is the potential
-    loss acceptable?', 3_One_Shot: 'Are you only doing one purchase? Buying more will
-    anchor you', 4_45_degree_angles: 'Any 45% angles? price, yellow? Have they been
-    digested by 9EMA', 5_Red_50_SMVA: 'Is the red-50 above below? With you against
-    you:', 6_VWAP: 'Was it abused recently? Is that good or bad:', 7_economic_events I: 'Any
-    major economic events today? (Fed, CPI, NFP, etc.)?', 8_economic_events II: 'Any
-    8:30AM (savior) economic events? This might anchor you, make you wait more than
-    needed:', 9_auction: 'Treasury auction (1PM) schedule affecting rates today?'}
+  - name: "Market Open"
+    start: "09:30"
+    end: "09:45"
+  - name: "Lunch Block"
+    start: "12:00"
+    end: "16:00"
+  - name: "Asian Open"
+    start: "18:00"
+    end: "21:15"
+
+# Contract multipliers by symbol
+multipliers:
+  /MES: 5
+  MES: 5
+  MES_OPT: 5
+
+# Trading strategies with metadata
 strategies:
-  5AM-LONG-SLUG: {default_side: BUY, default_type: OPTION, type: bull_put_spread}
-  5AM-OTHER: {default_side: BUY, default_type: OPTION, type: bull_put_spread}
-  BEAR-CALL: {type: bear_call_spread}
-  BULL-PUT: {type: bull_put_spread}
-  BULL-PUT-1:30-3:00: {type: bull_put_spread}
-  BULL-PUT-OVERNIGHT: {type: bull_put_spread}
-  NORMAL: {type: single_leg}
+  # Single leg strategies
+  NORMAL:
+    type: single_leg
+    default_type: FUTURE
+  
+  # Bull Put Spread strategies
+  5AM-LONG-SLUG:
+    type: bull_put_spread
+    default_side: BUY
+    default_type: OPTION
+  
+  5AM-OTHER:
+    type: bull_put_spread
+    default_side: BUY
+    default_type: OPTION
+  
+  BULL-PUT:
+    type: bull_put_spread
+  
+  BULL-PUT-OVERNIGHT:
+    type: bull_put_spread
+  
+  BULL-PUT-1:30-3:00:
+    type: bull_put_spread
+  
+  # Bear Call Spread strategies
+  BEAR-CALL:
+    type: bear_call_spread
+
+# Strategies exempt from timing blocks
+exemption:
+  - "BULL-PUT-1:30-3:00"
+
+# Commission and fee structure (updated to match ThinkOrSwim actual rates)
+costs:
+  FUTURE:
+    commission_per_contract: "1.10"
+    exchange_fees_per_contract: "0.37"
+    regulatory_fees_per_contract: "0.00"
+  
+  OPTION:
+    commission_per_contract: "2.20"  # Updated: was 1.25, now matches TOS ~$2.64/contract
+    exchange_fees_per_contract: "0.44"  # Updated: was 0.50, now matches TOS breakdown
+    regulatory_fees_per_contract: "0.00"  # Updated: was 0.02, TOS doesn't show this separately
+
+# Prompt system configuration
+prompt_triggers:
+  on_entry: true
+  on_exit: false
+
+# Trading decision prompts
+prompts:
+  1_Stop-watch: "Are you going to sell it in 1 hour if no profit?"
+  2_small_amount: "Is the potential loss acceptable?"
+  3_One_Shot: "Are you only doing one purchase? Buying more will anchor you"
+  4_45_degree_angles: "Any 45% angles? price, yellow? Have they been digested by 9EMA"
+  5_Red_50_SMVA: "Is the red-50 above below? With you against you:"
+  6_VWAP: "Was it abused recently? Is that good or bad:"
+  7_economic_events_I: "Any major economic events today? (Fed, CPI, NFP, etc.)?"
+  8_economic_events_II: "Any 8:30AM (savior) economic events? This might anchor you, make you wait more than needed:"
+  9_auction: "Treasury auction (1PM) schedule affecting rates today?"
+  10_earnings: "Major earnings releases this week that could impact market?"
+  11_fed_speakers: "Fed speakers scheduled today? (Check Fed calendar)?"
+  12_market_conditions: "Current market conditions/sentiment? (Bullish/Bearish/Neutral)"
+  13_volatility: "VIX level and volatility environment? (High/Normal/Low)"
+  14_invent_a_note_of_trade_going_wrong: "Write a note pretending trade went wrong:"
+  15_real_note: "Write a note:"
+
+# Risk management limits
+risk_limits:
+  starting_balance: 10000
+  max_position_percent: 33
+  hot_hand_threshold: 4
+  hot_hand_cooldown_hours: 24
+  loss_reduction_threshold: 3

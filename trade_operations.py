@@ -156,9 +156,18 @@ class TradeOperations:
         symbol_base = "MES"  # Default for MES options
         multiplier = self.cfg.get("multipliers", {}).get("MES", 5)
         
-        # Calculate costs for each leg
-        short_costs = calculate_costs("OPTION", qty, self.cfg)
-        long_costs = calculate_costs("OPTION", qty, self.cfg)
+        # Calculate costs for the SPREAD (not individual legs)
+        # TOS charges commission per spread order, not per leg
+        spread_costs = calculate_costs("OPTION", qty, self.cfg)
+        
+        # For spread trades, assign all costs to the first leg and zero to the second
+        # This reflects the reality that it's one order with one commission
+        short_costs = spread_costs
+        long_costs = CommissionFees(
+            commission=Decimal('0'),
+            exchange_fees=Decimal('0'), 
+            regulatory_fees=Decimal('0')
+        )
         
         # Build symbols
         short_symbol = f"MES_P_{short_strike}"
@@ -202,7 +211,7 @@ class TradeOperations:
         # Calculate trade metrics - convert all to Decimal for consistency
         strike_diff = Decimal(str(short_strike_float - long_strike_float))  # For bull put: should be positive
         total_premium = (short_price - long_price) * qty * multiplier
-        total_costs = short_costs.total() + long_costs.total()
+        total_costs = short_costs.total() + long_costs.total()  # Only short_costs has actual costs
         net_credit_amount = total_premium - total_costs
         max_risk = (strike_diff * qty * multiplier) - net_credit_amount
         
@@ -319,9 +328,18 @@ class TradeOperations:
         symbol_base = "MES"  # Default for MES options
         multiplier = self.cfg.get("multipliers", {}).get("MES", 5)
         
-        # Calculate costs for each leg
-        short_costs = calculate_costs("OPTION", qty, self.cfg)
-        long_costs = calculate_costs("OPTION", qty, self.cfg)
+        # Calculate costs for the SPREAD (not individual legs)
+        # TOS charges commission per spread order, not per leg
+        spread_costs = calculate_costs("OPTION", qty, self.cfg)
+        
+        # For spread trades, assign all costs to the first leg and zero to the second
+        # This reflects the reality that it's one order with one commission
+        short_costs = spread_costs
+        long_costs = CommissionFees(
+            commission=Decimal('0'),
+            exchange_fees=Decimal('0'), 
+            regulatory_fees=Decimal('0')
+        )
         
         # Build symbols
         short_symbol = f"MES_C_{short_strike}"
@@ -365,7 +383,7 @@ class TradeOperations:
         # Calculate trade metrics - convert all to Decimal for consistency  
         strike_diff = Decimal(str(long_strike_float - short_strike_float))  # For bear call: should be positive
         total_premium = (short_price - long_price) * qty * multiplier
-        total_costs = short_costs.total() + long_costs.total()
+        total_costs = short_costs.total() + long_costs.total()  # Only short_costs has actual costs
         net_credit_amount = total_premium - total_costs
         max_risk = (strike_diff * qty * multiplier) - net_credit_amount
         
@@ -387,7 +405,6 @@ class TradeOperations:
         
         return trade
     
-    # Keep existing methods for backward compatibility
     def open_single_leg_trade(self, strat, typ, side, symbol, qty, price, dry_run=False, 
                              custom_entry_time=None, custom_entry_date=None):
         """Open a single-leg trade with optional custom date and time"""
@@ -415,6 +432,18 @@ class TradeOperations:
         
         # Calculate costs
         entry_costs = calculate_costs(typ, qty, self.cfg)
+        
+        # Create leg
+        leg = Leg(
+            symbol=symbol,
+            side=side.upper(),
+            qty=qty,
+            entry=entry_price,
+            exit=None,
+            multiplier=multiplier,
+            entry_costs=entry_costs,
+            exit_costs=None
+        )
         
         # Create trade
         trade = Trade(
@@ -529,9 +558,18 @@ class TradeOperations:
                 
                 leg.exit = exit_price
                 
-                # Calculate exit costs
-                trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
-                leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                # Calculate exit costs - for spreads, only apply costs to first leg
+                if i == 0:
+                    # First leg gets the spread exit costs
+                    trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+                    leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                else:
+                    # Additional legs get zero exit costs (it's one spread order)
+                    leg.exit_costs = CommissionFees(
+                        commission=Decimal('0'),
+                        exchange_fees=Decimal('0'), 
+                        regulatory_fees=Decimal('0')
+                    )
                 
                 rich.print(f"[green]✓ Leg {leg.symbol} closed at ${leg.exit}[/]")
         
@@ -603,7 +641,7 @@ class TradeOperations:
         
         if len(trade.legs) == 2:
             # For two-leg spreads, estimate based on leg types
-            for leg in trade.legs:
+            for i, leg in enumerate(trade.legs):
                 if leg.side == "SELL":
                     # Short leg gets most of the debit (you're buying it back)
                     estimated_exit = leg.entry + (net_debit * Decimal("0.7"))
@@ -613,19 +651,36 @@ class TradeOperations:
                 
                 leg.exit = estimated_exit
                 
-                # Calculate exit costs
-                trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
-                leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                # Calculate exit costs - for spreads, only apply costs to first leg
+                if i == 0:
+                    # First leg gets the spread exit costs
+                    trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+                    leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                else:
+                    # Additional legs get zero exit costs (it's one spread order)
+                    leg.exit_costs = CommissionFees(
+                        commission=Decimal('0'),
+                        exchange_fees=Decimal('0'), 
+                        regulatory_fees=Decimal('0')
+                    )
                 
                 rich.print(f"[yellow]  Estimated {leg.symbol} exit: ${estimated_exit:.2f}[/]")
         else:
             # For complex spreads, distribute evenly
-            for leg in trade.legs:
+            for i, leg in enumerate(trade.legs):
                 estimated_exit = leg.entry + (net_debit / len(trade.legs))
                 leg.exit = estimated_exit
                 
-                trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
-                leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                # Calculate exit costs - for spreads, only apply costs to first leg
+                if i == 0:
+                    trade_type = "OPTION" if "OPTION" in trade.typ else "FUTURE"
+                    leg.exit_costs = calculate_costs(trade_type, leg.qty, self.cfg)
+                else:
+                    leg.exit_costs = CommissionFees(
+                        commission=Decimal('0'),
+                        exchange_fees=Decimal('0'), 
+                        regulatory_fees=Decimal('0')
+                    )
                 
                 rich.print(f"[yellow]  Estimated {leg.symbol} exit: ${estimated_exit:.2f}[/]")
     
